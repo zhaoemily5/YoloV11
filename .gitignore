@@ -1,347 +1,41 @@
 # ===========================================
-# YoloV11 AI评估系统 - Git忽略文件
-# 基于实际项目结构优化
+# YoloV11 项目 - Git 忽略文件
 # ===========================================
 
-# ---------- 编译产物 ----------
-# Maven/Java 编译产物
-target/
-build/
-out/
-*.class
-*.jar
-*.war
-*.ear
-*.nar
-
-# 前端构建产物
-frontend/dist/
-frontend/build/
-frontend/.nuxt/
-frontend/.output/
-frontend/.vite/
-
-# ---------- 依赖目录 ----------
-# Node.js 依赖
-frontend/node_modules/
+# ---------- 通用 ----------
 node_modules/
-
-# Maven 依赖缓存
-.m2/repository/
-
-# Python 依赖
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
 dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-
-# 第三方库和外部文件
-third-party/
-vendor/
-lib/
-libs/
-external/
-deps/
-dependencies/
-
-# 下载的文件和包
-downloads/
-*.download
-packages/
-*.zip
-*.tar.gz
-*.rar
-*.7z
-*.jar
-*.war
-
-# 前端第三方库
-frontend/vendor/
-frontend/lib/
-frontend/libs/
-frontend/third-party/
-
-# ---------- 日志文件 ----------
-# 应用日志（所有层级）
+build/
+target/
 *.log
-logs/
-backend/logs/
-frontend/logs/
-log/
+*.tmp
+*.bak
+*~
+*.swp
 
-# 具体日志文件（基于实际项目）
-backend/backend.log
-frontend/frontend.log
-frontend/cpolar.log
-logs/application.log
-logs/taoxichuan.log
-
-# Java 虚拟机崩溃日志
-hs_err_pid*
-replay_pid*
-
-# ---------- 环境配置 ----------
-# 环境变量文件
+# ---------- 环境变量 ----------
 .env
 .env.local
-.env.development.local
-.env.test.local
-.env.production.local
+.env.*.local
 
-# Spring Boot 配置文件（排除默认配置）
-application-*.yml
-application-*.properties
-!application.yml
-!application.properties
-
-# ---------- IDE 和编辑器 ----------
-# IntelliJ IDEA
+# ---------- IDE ----------
 .idea/
-*.iws
-*.iml
-*.ipr
-out/
-
-# VS Code
 .vscode/
-*.code-workspace
+*.iml
 
-# Eclipse
-.project
-.classpath
-.settings/
-bin/
-
-# NetBeans
-nbproject/
-nbbuild/
-dist/
-nb-gradle/
-
-# ---------- 操作系统生成文件 ----------
-# macOS
+# ---------- OS ----------
 .DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-
-# Windows
 Thumbs.db
-ehthumbs.db
-Desktop.ini
 
-# Linux
-*~
-.swp
-.swo
-
-# ---------- 临时文件和缓存 ----------
-# 临时文件
-*.tmp
-*.temp
-*.bak
-*.backup
-*.cache
-
-# 运行时文件
-*.pid
-*.seed
-*.pid.lock
-pids
-
-# 前端缓存
-frontend/.cache/
-frontend/.temp/
-frontend/.eslintcache
-frontend/.parcel-cache/
-
-# ---------- 测试和覆盖率 ----------
-# 测试覆盖率报告
-coverage/
-*.lcov
-.nyc_output
-
-# 测试结果
-test-results/
-junit/
-
-# ---------- 包管理器文件 ----------
-# npm 调试日志
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-lerna-debug.log*
-pnpm-debug.log*
-
-# Yarn
-.yarn-integrity
-.yarn/cache/
-.yarn/unplugged/
-.yarn/build-state.yml
-.yarn/install-state.gz
-
-# npm 缓存
-.npm
-
-# ---------- 数据库文件 ----------
-# 数据库文件
-*.db
-*.sqlite
-*.sqlite3
-
-# ---------- 上传和存储 ----------
-# 用户上传文件
+# ---------- 上传与运行时 ----------
 uploads/
-upload/
-temp/
-static/upload/
+*.pid
 
-# ---------- TypeScript ----------
-# TypeScript 编译输出
-*.tsbuildinfo
+# ---------- taoxichuan 子项目 ----------
+taoxichuan-ai-assessment/backend/target/
+taoxichuan-ai-assessment/frontend/node_modules/
+taoxichuan-ai-assessment/frontend/dist/
+taoxichuan-ai-assessment/frontend/auto-imports.d.ts
+taoxichuan-ai-assessment/frontend/components.d.ts
+taoxichuan-ai-assessment/frontend/.eslintrc-auto-import.json
 
-# 自动生成的类型文件（基于实际项目）
-frontend/auto-imports.d.ts
-frontend/components.d.ts
-frontend/.eslintrc-auto-import.json
-
-# ---------- 安全相关 ----------
-# 密钥和证书
-*.pem
-*.key
-*.crt
-*.p12
-*.jks
-
-# ---------- 项目特定文件 ----------
-# 项目根目录下的临时文件（基于实际项目）
-index(*).html
-通话录音.md
-ToDoList.md
-
-# 开发时的测试文件
-test-*.html
-demo-*.html
-
-# 首页和展示文件
-index.html
-home.html
-main.html
-demo.html
-
-# 项目根目录脚本和工具（基于实际项目）
-deploy.sh
-quick-start.sh
-start.sh
-stop.sh
-restart.sh
-build.sh
-install.sh
-setup.sh
-
-# ---------- Cpolar 相关 ----------
-# Cpolar 日志
-cpolar.log
-*.tunnel
-
-# ---------- 备份和归档 ----------
-# 备份文件
-*.zip
-*.tar.gz
-*.rar
-*.7z
-
-# 版本归档
-releases/
-archives/
-
-# ---------- 性能分析 ----------
-# 性能分析文件
-*.hprof
-*.dump
-
-# ---------- 构建工具 ----------
-# Maven 构建临时文件
-pom.xml.tag
-pom.xml.releaseBackup
-pom.xml.versionsBackup
-pom.xml.next
-release.properties
-dependency-reduced-pom.xml
-buildNumber.properties
-.mvn/timing.properties
-
-# Gradle
-.gradle
-!gradle/wrapper/gradle-wrapper.jar
-
-# ---------- 监控和分析 ----------
-# 监控数据
-monitoring/
-metrics/
-
-# 分析报告
-reports/
-*.report
-
-# ---------- 文档生成 ----------
-# 自动生成的文档
-docs/generated/
-javadoc/
-
-# ---------- 第三方服务 ----------
-# Docker 相关（可选）
-.dockerignore
-docker-compose.override.yml
-
-# ---------- CI/CD 相关 ----------
-# CI/CD 工具临时文件
-.github/workflows/*.tmp
-.gitlab-ci.yml.local
-
-# ===========================================
-# 基于实际项目结构的优化说明：
-# 
-# 1. 编译产物：
-#    - backend/target/ (Maven构建产物)
-#    - frontend/dist/ (前端构建产物)
-#    - frontend/node_modules/ (前端依赖)
-
-# 2. 日志文件：
-#    - backend/backend.log (后端日志)
-#    - frontend/frontend.log (前端日志)
-#    - frontend/cpolar.log (Cpolar日志)
-#    - logs/ (应用日志目录)
-
-# 3. 配置文件：
-#    - frontend/.env (环境变量)
-#    - application-*.yml (Spring Boot配置)
-
-# 4. 临时文件：
-#    - index(*).html (临时HTML文件)
-#    - 通话录音.md (临时录音文件)
-#    - ToDoList.md (临时待办文件)
-
-# 5. 自动生成文件：
-#    - frontend/auto-imports.d.ts (自动导入类型)
-#    - frontend/components.d.ts (组件类型)
-#    - frontend/.eslintrc-auto-import.json (ESLint配置)
-# 
-# ===========================================

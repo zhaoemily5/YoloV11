@@ -339,8 +339,6 @@ interface SummaryItem {
   items: Detection[]
 }
 
-// DetectionResult 类型从 API 层导入
-
 interface QualityResult {
   brightness: number
   blur: number

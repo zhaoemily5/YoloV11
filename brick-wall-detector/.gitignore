@@ -1,1 +1,29 @@
+# 运行时
 .runtime/
+
+# 依赖
+node_modules/
+
+# 构建产物
+dist/
+
+# 环境变量（含密钥）
+.env
+.env.local
+.env.*.local
+
+# 上传文件
+uploads/
+
+# 日志
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*~
