@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes, viewport-fit=cover">
+  <meta name="theme-color" content="#0070C0">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="砖墙检测">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="format-detection" content="telephone=no">
+  <meta name="description" content="基于YOLOv11的红砖墙病害智能检测系统，支持风化、泛碱、裂缝、脱落、缺损五类病害识别">
+  <title>红砖墙病害智能检测系统</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='4' fill='%230070C0'/><text x='16' y='23' font-size='20' text-anchor='middle' fill='white'>砖</text></svg>">
+  <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'><rect width='180' height='180' rx='36' fill='%230070C0'/><text x='90' y='125' font-size='100' text-anchor='middle' fill='white'>砖</text></svg>">
+  <style>
+    /* Critical CSS for fast first paint */
+    *{box-sizing:border-box;margin:0;padding:0}
+    html{-webkit-text-size-adjust:100%;-webkit-tap-highlight-color:transparent}
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,'PingFang SC','Microsoft YaHei',sans-serif;background:#f0f9ff;min-height:100vh;overflow-x:hidden}
+    #app{min-height:100vh}
+    /* Loading spinner */
+    .app-loading{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;background:linear-gradient(180deg,#e6f2fb 0%,#f0f9ff 100%)}
+    .app-loading-spinner{width:40px;height:40px;border:3px solid #d6ebf7;border-top-color:#0070C0;border-radius:50%;animation:spin 1s linear infinite}
+    .app-loading-text{margin-top:16px;color:#0070C0;font-size:14px}
+    @keyframes spin{to{transform:rotate(360deg)}}
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div class="app-loading">
+      <div class="app-loading-spinner"></div>
+      <div class="app-loading-text">加载中...</div>
+    </div>
+  </div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

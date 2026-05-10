@@ -1,0 +1,240 @@
+/**
+ * API 服务层 - 前后端分离接口封装
+ * 统一管理所有后端 API 调用
+ */
+import axios from 'axios'
+
+// 创建 axios 实例
+const api = axios.create({
+  baseURL: import.meta.env.VITE_API_BASE_URL || '/api',
+  timeout: 60000,
+  headers: {
+    'Content-Type': 'application/json'
+  }
+})
+
+// 请求拦截器
+api.interceptors.request.use(
+  (config) => {
+    // 可以在这里添加 token 等认证信息
+    return config
+  },
+  (error) => {
+    return Promise.reject(error)
+  }
+)
+
+// 响应拦截器
+api.interceptors.response.use(
+  (response) => {
+    return response.data
+  },
+  (error) => {
+    const message = error.response?.data?.message || error.message || '请求失败'
+    return Promise.reject(new Error(message))
+  }
+)
+
+// ==================== 类型定义 ====================
+
+export interface Detection {
+  id: number
+  class: string
+  confidence: number
+  bbox: number[]
+  area: number | null
+  severity: string
+  gridId?: string
+}
+
+export interface SummaryItem {
+  count: number
+  totalArea: number
+  maxSeverity: string
+  items: Detection[]
+}
+
+export interface DetectionResult {
+  success: boolean
+  imagePath: string
+  imageWidth: number
+  imageHeight: number
+  totalDetections: number
+  detections: Detection[]
+  summary: Record<string, SummaryItem>
+  timestamp: string
+  modelInfo: {
+    name: string
+    version: string
+    platform: string
+  }
+  brickLengthMm?: number
+  note?: string
+}
+
+export interface Report {
+  title: string
+  generatedAt: string
+  detectionTime: string
+  imagePath: string
+  brickLengthMm: number
+  professionalNote: string
+  overallAssessment: {
+    totalDiseaseTypes: number
+    totalDetections: number
+    overallRisk: string
+    weatheringArea: string
+    efflorescenceArea: string
+    totalEstimatedCost: number
+    recommendation: string
+  }
+  gridAnalysis: Array<{
+    gridId: string
+    total: number
+    diseases: Record<string, number>
+    severity: string
+    priority: number
+  }>
+  diseaseDetails: Array<{
+    name: string
+    color: string
+    detected: boolean
+    count: number
+    totalArea: number | null
+    maxSeverity: string
+    estimatedCost: number
+    quantity: number
+    unit: string
+    description: string
+    severity: string
+    repairMethod: string[]
+    materials: string
+    preventionMeasures: string
+  }>
+  repairPlan: {
+    urgentItems: any[]
+    importantItems: any[]
+    routineItems: any[]
+  }
+}
+
+export interface AIAnalysisResult {
+  success: boolean
+  analysis: string
+  provider: string
+  analysisType: string
+  timestamp: string
+  note?: string
+}
+
+export interface AIChatResult {
+  success: boolean
+  reply: string
+  provider: string
+  timestamp: string
+}
+
+export interface AIServiceStatus {
+  success: boolean
+  aiServices: {
+    paiLlm: {
+      configured: boolean
+      priority: number
+      description: string
+    }
+    siliconflow: {
+      configured: boolean
+      model: string
+      priority: number
+      description: string
+    }
+    ruleEngine: {
+      configured: boolean
+      priority: number
+      description: string
+    }
+  }
+  activeProvider: string
+}
+
+// ==================== API 方法 ====================
+
+/**
+ * 健康检查
+ */
+export async function checkHealth(): Promise<{ status: string; timestamp: string }> {
+  return api.get('/health')
+}
+
+/**
+ * 病害检测
+ * @param imageFile 图片文件
+ * @param brickLengthMm 参考砖长度（mm）
+ */
+export async function detectDisease(
+  imageFile: File,
+  brickLengthMm: number = 240
+): Promise<DetectionResult> {
+  const formData = new FormData()
+  formData.append('image', imageFile)
+  formData.append('brickLengthMm', String(brickLengthMm))
+  
+  return api.post('/detect', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 60000
+  })
+}
+
+/**
+ * 生成修缮报告
+ * @param detectionResult 检测结果
+ */
+export async function generateReport(
+  detectionResult: DetectionResult
+): Promise<{ success: boolean; report: Report }> {
+  return api.post('/report/generate', { detectionResult })
+}
+
+/**
+ * AI 智能分析
+ * @param detectionResult 检测结果
+ * @param analysisType 分析类型: comprehensive | cause | repair | prevention
+ */
+export async function aiAnalyze(
+  detectionResult: DetectionResult,
+  analysisType: 'comprehensive' | 'cause' | 'repair' | 'prevention' = 'comprehensive'
+): Promise<AIAnalysisResult> {
+  return api.post('/ai/analyze', { detectionResult, analysisType })
+}
+
+/**
+ * AI 对话
+ * @param message 用户消息
+ * @param context 上下文（检测结果摘要）
+ */
+export async function aiChat(
+  message: string,
+  context?: any
+): Promise<AIChatResult> {
+  return api.post('/ai/chat', { message, context })
+}
+
+/**
+ * 获取 AI 服务状态
+ */
+export async function getAIStatus(): Promise<AIServiceStatus> {
+  return api.get('/ai/status')
+}
+
+// 导出 axios 实例供特殊场景使用
+export { api }
+
+// 默认导出所有方法
+export default {
+  checkHealth,
+  detectDisease,
+  generateReport,
+  aiAnalyze,
+  aiChat,
+  getAIStatus
+}
