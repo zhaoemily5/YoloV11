@@ -67,6 +67,26 @@
               <el-switch v-model="settingsForm.enableAutoReport" />
             </el-form-item>
 
+            <el-divider content-position="left">并发控制（防内存溢出）</el-divider>
+            <el-form-item label="最大并发数">
+              <el-input-number
+                v-model="settingsForm.maxConcurrent"
+                :min="1" :max="4" :step="1"
+              />
+              <div style="font-size:12px;color:#909399;margin-top:4px">
+                同时处理的推理任务数（1=单线程，默认），建议保持 1 防止内存溢出
+              </div>
+            </el-form-item>
+            <el-form-item label="最大排队数">
+              <el-input-number
+                v-model="settingsForm.maxQueueSize"
+                :min="1" :max="50" :step="1"
+              />
+              <div style="font-size:12px;color:#909399;margin-top:4px">
+                队列满后拒绝新请求，防止无限堆积（当前: {{ settingsForm.maxQueueSize }} 位）
+              </div>
+            </el-form-item>
+
             <el-divider content-position="left">存储配置</el-divider>
             <el-form-item label="存储方式">
               <el-input v-model="settingsForm.storageType" />
@@ -155,7 +175,9 @@ const settingsForm = reactive({
   enableAutoReport: true,
   storageType: '',
   cacheLimit: 500,
-  cacheStrategy: ''
+  cacheStrategy: '',
+  maxConcurrent: 1,
+  maxQueueSize: 10
 })
 
 const systemStatus = reactive({

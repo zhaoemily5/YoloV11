@@ -20,7 +20,7 @@
 
     <!-- ── 拼合大图视图 ── -->
     <div v-show="viewMode === 'stitched'" class="tgv-stitched-wrap">
-      <div class="tgv-img-container" ref="containerRef" @resize="onContainerResize">
+      <div class="tgv-img-container" ref="containerRef" :style="containerStyle" @resize="onContainerResize">
         <!-- 主图：优先显示拼合标注大图，否则显示原图 -->
         <img
           ref="imgRef"
@@ -211,6 +211,11 @@ const containerRef = ref<HTMLDivElement | null>(null)
 const imgDisplayW = ref(0)
 const imgDisplayH = ref(0)
 
+const containerStyle = computed(() => {
+  if (!props.stitchedWidth || !props.stitchedHeight) return {}
+  return { aspectRatio: `${props.stitchedWidth} / ${props.stitchedHeight}` }
+})
+
 function onImgLoad() {
   const img = imgRef.value
   if (!img) return
@@ -283,8 +288,9 @@ function tileDetections(tile: TileInfo) {
 
 .tgv-img-container {
   position: relative;
-  display: inline-block;
+  display: block;
   width: 100%;
+  max-height: 65vh;
   border-radius: 8px;
   overflow: hidden;
   background: #1e1e1e;
@@ -293,8 +299,8 @@ function tileDetections(tile: TileInfo) {
 .tgv-img {
   display: block;
   width: 100%;
-  max-height: 560px;
-  object-fit: contain;
+  height: 100%;
+  object-fit: fill;
   border-radius: 8px;
 }
 

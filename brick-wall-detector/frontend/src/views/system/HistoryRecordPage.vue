@@ -14,10 +14,11 @@
             end-placeholder="结束日期"
             value-format="YYYY-MM-DD"
             @change="handleDateChange"
+            @calendar-change="() => {}"
           />
         </el-form-item>
         <el-form-item label="病害类型">
-          <el-select v-model="queryParams.diseaseType" placeholder="请选择" clearable>
+          <el-select v-model="queryParams.diseaseType" placeholder="请选择" clearable @change="handleQuery">
             <el-option label="风化" value="风化" />
             <el-option label="泛碱" value="泛碱" />
             <el-option label="裂缝" value="裂缝" />
@@ -26,7 +27,7 @@
           </el-select>
         </el-form-item>
         <el-form-item label="检测状态">
-          <el-select v-model="queryParams.status" placeholder="请选择" clearable>
+          <el-select v-model="queryParams.status" placeholder="请选择" clearable @change="handleQuery">
             <el-option label="已完成" value="completed" />
             <el-option label="检测中" value="processing" />
             <el-option label="失败" value="failed" />
@@ -89,7 +90,7 @@
     </el-card>
 
     <el-dialog v-model="detailVisible" title="检测详情" width="700px" destroy-on-close>
-      <div v-loading="detailLoading">
+      <div v-loading="detailLoading" style="max-height: 65vh; overflow-y: auto; padding-right: 4px;">
         <el-descriptions :column="2" border v-if="detailData">
           <el-descriptions-item label="检测编号">{{ detailData.recordNo }}</el-descriptions-item>
           <el-descriptions-item label="项目名称">{{ detailData.projectName }}</el-descriptions-item>
@@ -159,6 +160,7 @@ function handleDateChange(val: string[] | null) {
     queryParams.startTime = ''
     queryParams.endTime = ''
   }
+  handleQuery()
 }
 
 async function fetchData() {
@@ -228,6 +230,8 @@ async function handleExport(row: any) {
     if (res.code === 200 && res.data?.reportUrl) {
       window.open(res.data.reportUrl, '_blank')
       ElMessage.success('报告导出成功')
+    } else {
+      ElMessage.warning('暂无可下载的报告，请先在分析页生成报告')
     }
   } catch (err: any) {
     ElMessage.error(err.message || '报告导出失败')

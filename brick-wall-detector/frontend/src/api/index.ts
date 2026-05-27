@@ -184,6 +184,17 @@ export interface AIServiceStatus {
   activeProvider: string
 }
 
+export interface QueueProgress {
+  status: string
+  position?: number
+  progress?: number
+  message?: string
+  tilesProcessed?: number
+  tilesTotal?: number
+}
+
+const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
+
 // ==================== API 方法 ====================
 
 /**
@@ -210,24 +221,34 @@ export async function getModelDefaults(): Promise<{ success: boolean; modelConf:
 export async function detectDisease(
   imageFile: File,
   brickLengthMm: number = 240,
-  modelParams?: Partial<ModelParams>
+  modelParams?: Partial<ModelParams>,
+  onProgress?: (info: QueueProgress) => void
 ): Promise<DetectionResult> {
   const formData = new FormData()
   formData.append('image', imageFile)
   formData.append('brickLengthMm', String(brickLengthMm))
-  if (modelParams?.modelConf !== undefined)
-    formData.append('modelConf', String(modelParams.modelConf))
-  if (modelParams?.iouThreshold !== undefined)
-    formData.append('iouThreshold', String(modelParams.iouThreshold))
-  if (modelParams?.imageSize !== undefined)
-    formData.append('imageSize', String(modelParams.imageSize))
-  if (modelParams?.modelId)
-    formData.append('modelId', modelParams.modelId)
-  
-  return api.post('/detect', formData, {
+  if (modelParams?.modelConf !== undefined) formData.append('modelConf', String(modelParams.modelConf))
+  if (modelParams?.iouThreshold !== undefined) formData.append('iouThreshold', String(modelParams.iouThreshold))
+  if (modelParams?.imageSize !== undefined) formData.append('imageSize', String(modelParams.imageSize))
+  if (modelParams?.modelId) formData.append('modelId', modelParams.modelId)
+
+  const initial: any = await api.post('/detect', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
-    timeout: 120000
+    timeout: 30000
   })
+  if (!initial?.jobId) return initial as DetectionResult
+
+  onProgress?.({ status: initial.status, position: initial.position, message: initial.message })
+  if (initial.status === 'done') return initial.result
+
+  for (let i = 0; i < 240; i++) {
+    await sleep(1500)
+    const poll: any = await api.get(`/detect/${initial.jobId}/status`)
+    onProgress?.({ status: poll.status, position: poll.position, message: poll.message })
+    if (poll.status === 'done') return poll.result as DetectionResult
+    if (poll.status === 'error') throw new Error(poll.error || '推理失败')
+  }
+  throw new Error('检测超时（6分钟），请重试')
 }
 
 /**
@@ -380,7 +401,8 @@ export async function analyzeFacade(
     cropY?: number
     cropWidth?: number
     cropHeight?: number
-  } = {}
+  } = {},
+  onProgress?: (info: QueueProgress) => void
 ): Promise<FacadeResult> {
   const body: Record<string, any> = {
     tileSize:     options.tileSize     || 640,
@@ -388,7 +410,7 @@ export async function analyzeFacade(
     modelConf:    options.modelConf    ?? 0.30,
     iouThreshold: options.iouThreshold ?? 0.45
   }
-  if (options.gridMode)   body.gridMode   = options.gridMode
+  if (options.gridMode) body.gridMode = options.gridMode
   if (Array.isArray(options.customVDividers) && options.customVDividers.length > 0)
     body.customVDividers = options.customVDividers
   if (Array.isArray(options.customHDividers) && options.customHDividers.length > 0)
@@ -397,7 +419,26 @@ export async function analyzeFacade(
   if (options.cropY      != null) body.cropY      = options.cropY
   if (options.cropWidth  != null) body.cropWidth  = options.cropWidth
   if (options.cropHeight != null) body.cropHeight = options.cropHeight
-  return api.post(`/facade/analyze/${jobId}`, body, { timeout: 300000 })
+
+  const initial: any = await api.post(`/facade/analyze/${jobId}`, body, { timeout: 60000 })
+  const pollJobId = initial.jobId || jobId
+  onProgress?.({ status: initial.status, position: initial.position, message: initial.message })
+
+  for (let i = 0; i < 300; i++) {
+    await sleep(2000)
+    const poll: any = await api.get(`/facade/job/${pollJobId}`)
+    const st   = poll.status  ?? poll.job?.status
+    const pos  = poll.position  ?? 0
+    const prog = poll.progress ?? poll.job?.progress ?? 0
+    onProgress?.({
+      status: st, position: pos, progress: prog, message: poll.message,
+      tilesProcessed: poll.tilesProcessed ?? 0,
+      tilesTotal:     poll.tilesTotal     ?? 0
+    })
+    if (st === 'finished') return poll as FacadeResult
+    if (st === 'error')    throw new Error(poll.message || '分析失败')
+  }
+  throw new Error('分析超时（10分钟），请重试')
 }
 
 /**

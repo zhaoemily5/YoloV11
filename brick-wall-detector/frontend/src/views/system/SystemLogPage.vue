@@ -6,7 +6,7 @@
           <el-input v-model="queryParams.username" placeholder="请输入" clearable />
         </el-form-item>
         <el-form-item label="日志类型" v-if="logTypeOptions.length > 0">
-          <el-select v-model="queryParams.logType" placeholder="请选择" clearable>
+          <el-select v-model="queryParams.logType" placeholder="请选择" clearable @change="handleQuery">
             <el-option
               v-for="item in logTypeOptions"
               :key="item.value"
@@ -16,7 +16,7 @@
           </el-select>
         </el-form-item>
         <el-form-item label="操作状态">
-          <el-select v-model="queryParams.status" placeholder="请选择" clearable>
+          <el-select v-model="queryParams.status" placeholder="请选择" clearable @change="handleQuery">
             <el-option label="成功" value="success" />
             <el-option label="失败" value="fail" />
           </el-select>
@@ -130,6 +130,7 @@ function handleDateChange(val: string[] | null) {
     queryParams.startTime = ''
     queryParams.endTime = ''
   }
+  handleQuery()
 }
 
 async function fetchData() {

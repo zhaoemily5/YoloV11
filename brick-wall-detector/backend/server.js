@@ -66,7 +66,13 @@ const uploadsDir = fs.existsSync(path.join(__dirname, 'uploads'))
 const distDir = fs.existsSync(path.join(__dirname, 'dist'))
   ? path.join(__dirname, 'dist')
   : path.join(repoRoot, 'dist');
-app.use('/uploads', express.static(uploadsDir));
+app.use('/uploads', express.static(uploadsDir, {
+  setHeaders: (res) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+  }
+}));
 app.use(express.static(distDir));
 
 // 运行目录初始化（基于 server.js 同级，便于在 backend/ 中持久化数据）
@@ -84,7 +90,7 @@ runtimeDirs.forEach(dir => {
 });
 
 // 初始化认证与系统管理模块
-const { authMiddleware: requireAuth, optionalAuth, addLog: logAction, addHistoryRecord } = initAuth(app, __dirname, { resolveModelPath });
+const { authMiddleware: requireAuth, optionalAuth, addLog: logAction, addHistoryRecord } = initAuth(app, __dirname, { resolveModelPath, onSettingsUpdate: updateQueueSettings });
 
 // 单图上传存储（原有 /api/detect 使用）
 const singleStorage = multer.diskStorage({
@@ -152,6 +158,135 @@ function getDefaultIouThreshold() {
     const t = parseFloat(s.iouThreshold);
     return Number.isFinite(t) && t >= 0.10 && t <= 0.90 ? t : 0.45;
   } catch { return 0.45; }
+}
+
+// ==================== 推理排队 ====================
+
+class InferenceQueue {
+  constructor(maxConcurrent = 1, maxQueueSize = 10) {
+    this.maxConcurrent = maxConcurrent;
+    this.maxQueueSize  = maxQueueSize;
+    this.running       = 0;
+    this.pending       = []; // [{id, run, resolve, reject}]
+  }
+  /** 排在 id 前面的任务数（含运行中 + 队列中更早的） */
+  aheadOf(id) {
+    const idx = this.pending.findIndex(t => t.id === id);
+    return idx === -1 ? 0 : this.running + idx;
+  }
+  get waitingCount() { return this.pending.length; }
+  enqueue(id, fn) {
+    if (this.running >= this.maxConcurrent && this.pending.length >= this.maxQueueSize) {
+      return Promise.reject(Object.assign(new Error('队列已满，请稍后重试'), { code: 'QUEUE_FULL' }));
+    }
+    return new Promise((resolve, reject) => {
+      const run = () => {
+        this.running++;
+        fn().then(resolve).catch(reject).finally(() => { this.running--; this._drain(); });
+      };
+      if (this.running < this.maxConcurrent) { run(); }
+      else { this.pending.push({ id, run, resolve, reject }); }
+    });
+  }
+  _drain() {
+    while (this.running < this.maxConcurrent && this.pending.length > 0) {
+      this.pending.shift().run();
+    }
+  }
+}
+
+let inferQueue = null;
+
+function getInferQueue() {
+  if (!inferQueue) updateQueueSettings();
+  return inferQueue;
+}
+
+function updateQueueSettings() {
+  try {
+    const s = JSON.parse(fs.readFileSync(path.join(__dirname, 'data/settings.json'), 'utf-8'));
+    const maxC = Math.max(1, Math.min(4,  parseInt(s.maxConcurrent) || 1));
+    const maxQ = Math.max(1, Math.min(50, parseInt(s.maxQueueSize)  || 10));
+    if (!inferQueue) {
+      inferQueue = new InferenceQueue(maxC, maxQ);
+      console.log(`[Queue] 推理队列已初始化: maxConcurrent=${maxC} maxQueueSize=${maxQ}`);
+    } else {
+      inferQueue.maxConcurrent = maxC;
+      inferQueue.maxQueueSize  = maxQ;
+      console.log(`[Queue] 推理队列设置已更新: maxConcurrent=${maxC} maxQueueSize=${maxQ}`);
+    }
+  } catch { if (!inferQueue) inferQueue = new InferenceQueue(1, 10); }
+}
+
+// ==================== 单图检测任务 Store ====================
+
+const detectJobStore = new Map(); // jobId → {status, position, result, error, createdAt}
+
+setInterval(() => {
+  const cutoff = Date.now() - 30 * 60 * 1000;
+  for (const [id, jr] of detectJobStore) { if (jr.createdAt < cutoff) detectJobStore.delete(id); }
+}, 5 * 60 * 1000);
+
+// ==================== 单图推理任务（从 HTTP handler 分离以支持队列）====================
+
+async function runDetectTask({ filePath, filename, imagePath, brickLengthMm, selectedModel, modelConf, iouThreshold, inferImgsz, projectName, username, ipAddress }) {
+  const sizeOf = await import('image-size').then(m => m.default).catch(() => null);
+  let imageWidth = 800, imageHeight = 600;
+  if (sizeOf) {
+    try { const d = sizeOf(filePath); imageWidth = d.width || 800; imageHeight = d.height || 600; } catch (_) {}
+  }
+  let result, usedLocalModel = false;
+  try {
+    const inferScript = path.join(__dirname, 'run_inference.py');
+    const { stdout } = await execFileAsync(
+      'python3',
+      [inferScript, filePath, String(modelConf), String(iouThreshold), String(inferImgsz), selectedModel.path],
+      { timeout: 90000, maxBuffer: 1024 * 1024 * 10 }
+    );
+    const localResult = JSON.parse(stdout.trim());
+    if (localResult.success) {
+      usedLocalModel = true;
+      imageWidth  = localResult.image_width  || imageWidth;
+      imageHeight = localResult.image_height || imageHeight;
+      result = parseLocalModelResponse(localResult, imagePath, brickLengthMm, imageWidth, imageHeight);
+      if (localResult.annotated_image_path)
+        result.annotatedImageUrl = `/uploads/single/${path.basename(localResult.annotated_image_path)}`;
+      if (localResult.coord_txt_content)
+        result.coordTxtContent = localResult.coord_txt_content;
+      result.modelInfo = { ...result.modelInfo, name: selectedModel.name, version: selectedModel.file,
+        platform: localResult.engine === 'ultralytics' ? '本地PyTorch推理' : '本地ONNX推理' };
+      result.selectedModel   = { id: selectedModel.id, name: selectedModel.name, file: selectedModel.file, type: selectedModel.type };
+      result.inferenceParams = { modelConf, iouThreshold, inferImgsz, modelId: selectedModel.id };
+      console.log(`[Detect] 推理完成 模型=${selectedModel.file} 检出=${result.totalDetections} conf=${modelConf} iou=${iouThreshold} imgsz=${inferImgsz}`);
+    }
+  } catch (localErr) {
+    console.error('[Detect] Python推理失败:', localErr.message);
+    if (localErr.stderr) console.error('  stderr:', String(localErr.stderr).slice(0, 800));
+    if (localErr.stdout) console.error('  stdout:', String(localErr.stdout).slice(0, 400));
+    if (localErr.code)   console.error('  exit code:', localErr.code);
+  }
+  if (!result) throw new Error('模型推理失败，请检查服务器日志');
+  result.isDemo = false;
+  result.inferenceParams = result.inferenceParams || { modelConf, iouThreshold, inferImgsz, modelId: selectedModel.id };
+  result.brickLengthMm = brickLengthMm;
+  try {
+    addHistoryRecord({
+      projectName: projectName || '单图检测', imageName: filename,
+      wallSize: `${imageWidth}x${imageHeight}`,
+      diseaseTypes: [...new Set((result.detections || []).map(d => d.class))],
+      diseaseCount: result.totalDetections || 0, resultImageUrl: imagePath, reportUrl: null
+    });
+  } catch (e) { console.error('保存历史记录失败:', e.message); }
+  try {
+    logAction({
+      username: username || '匿名', logType: 'DETECTION',
+      operation: `上传图片 ${filename} 进行病害检测，检出 ${result.totalDetections || 0} 处病害`,
+      ipAddress: ipAddress || '未知', status: 'success',
+      message: usedLocalModel ? '使用本地YOLOv11模型' : '演示模式',
+      requestUrl: '/api/detect', requestMethod: 'POST'
+    });
+  } catch (e) { console.error('记录日志失败:', e.message); }
+  return result;
 }
 
 // 全景大图上传存储（立面普查模式使用）
@@ -513,147 +648,80 @@ app.get('/api/models', (_req, res) => {
 
 app.post('/api/detect', optionalAuth, upload.single('image'), async (req, res) => {
   try {
-    if (!req.file) {
-      return res.status(400).json({ success: false, message: '请上传图片' });
-    }
+    if (!req.file) return res.status(400).json({ success: false, message: '请上传图片' });
 
     const imagePath = `/uploads/single/${req.file.filename}`;
     const brickLengthMm = parseInt(req.body.brickLengthMm) || 240;
     const selectedModel = resolveModelPath(req.body.modelId);
-    if (!selectedModel) {
-      return res.status(500).json({ success: false, message: '未找到可用模型文件' });
-    }
+    if (!selectedModel) return res.status(500).json({ success: false, message: '未找到可用模型文件' });
 
-    // 前端传入的模型推理参数（带合理范围限制）
     const _parsedConf = parseFloat(req.body?.modelConf);
     const modelConf = Math.max(0.05, Math.min(0.95,
       !isNaN(_parsedConf) ? _parsedConf
         : (!isNaN(parseFloat(process.env.YOLO_CONFIDENCE)) ? parseFloat(process.env.YOLO_CONFIDENCE) : getDefaultModelConf())
     ));
     console.log(`[Detect] 参数接收 conf=${modelConf}(raw="${req.body?.modelConf}") iou=${req.body?.iouThreshold} imgsz=${req.body?.imageSize}`);
-    const iouThreshold = Math.max(0.10, Math.min(0.90,
-      parseFloat(req.body.iouThreshold) || 0.45
-    ));
+    const iouThreshold = Math.max(0.10, Math.min(0.90, parseFloat(req.body.iouThreshold) || 0.45));
     const inferImgsz = [320, 416, 640, 1024, 1280].includes(parseInt(req.body.imageSize))
       ? parseInt(req.body.imageSize) : 640;
 
-    // 获取图片尺寸
-    const sizeOf = await import('image-size').then(m => m.default).catch(() => null);
-    let imageWidth = 800, imageHeight = 600;
-    if (sizeOf) {
-      try {
-        const dimensions = sizeOf(req.file.path);
-        imageWidth = dimensions.width || 800;
-        imageHeight = dimensions.height || 600;
-      } catch (e) { /* 使用默认值 */ }
+    // 队列检查
+    const q = getInferQueue();
+    if (q.running >= q.maxConcurrent && q.pending.length >= q.maxQueueSize) {
+      return res.status(503).json({ success: false, message: `服务器繁忙，推理队列已满（最多排 ${q.maxQueueSize} 位），请稍后再试` });
     }
+    const position = q.running >= q.maxConcurrent ? q.running + q.pending.length : 0;
+    const jobId = uuidv4();
+    detectJobStore.set(jobId, { status: position > 0 ? 'queued' : 'processing', position, result: null, error: null, createdAt: Date.now() });
 
-    let result;
-    let usedLocalModel = false;
-    let isDemo = false;
+    // 立即响应
+    res.json({
+      success: true, jobId,
+      status: position > 0 ? 'queued' : 'processing', position,
+      message: position > 0 ? `排队中，您前面还有 ${position} 位` : '推理中...'
+    });
 
-    // 强制模型推理（Python 子进程 + ONNX Runtime + best.onnx）
-    {
-      try {
-        const inferScript = path.join(__dirname, 'run_inference.py');
-        const { stdout } = await execFileAsync(
-          'python3',
-          [inferScript, req.file.path, String(modelConf), String(iouThreshold), String(inferImgsz), selectedModel.path],
-          { timeout: 90000, maxBuffer: 1024 * 1024 * 10 }
-        );
-        const localResult = JSON.parse(stdout.trim());
-        if (localResult.success) {
-          usedLocalModel = true;
-          imageWidth = localResult.image_width || imageWidth;
-          imageHeight = localResult.image_height || imageHeight;
-          result = parseLocalModelResponse(localResult, imagePath, brickLengthMm, imageWidth, imageHeight);
+    // 推理任务入队（后台异步执行）
+    const taskParams = {
+      filePath: req.file.path, filename: req.file.originalname, imagePath, brickLengthMm,
+      selectedModel, modelConf, iouThreshold, inferImgsz,
+      projectName: req.body.projectName, username: req.user?.username,
+      ipAddress: req.ip || req.connection?.remoteAddress
+    };
+    q.enqueue(jobId, async () => {
+      const jr = detectJobStore.get(jobId);
+      if (jr) { jr.status = 'processing'; jr.position = 0; }
+      const result = await runDetectTask(taskParams);
+      const jrDone = detectJobStore.get(jobId);
+      if (jrDone) { jrDone.status = 'done'; jrDone.result = result; }
+    }).catch(err => {
+      const jr = detectJobStore.get(jobId);
+      if (jr) { jr.status = 'error'; jr.error = err.message; }
+    });
 
-          // 标注图 URL（Python 保存到上传目录同名 _annotated 文件）
-          if (localResult.annotated_image_path) {
-            const annotatedFilename = path.basename(localResult.annotated_image_path);
-            result.annotatedImageUrl = `/uploads/single/${annotatedFilename}`;
-          }
-          // 坐标 TXT 内容（参考格式）
-          if (localResult.coord_txt_content) {
-            result.coordTxtContent = localResult.coord_txt_content;
-          }
-          result.modelInfo = {
-            ...result.modelInfo,
-            name: selectedModel.name,
-            version: selectedModel.file,
-            platform: localResult.engine === 'ultralytics' ? '本地PyTorch推理' : '本地ONNX推理'
-          };
-          result.selectedModel = {
-            id: selectedModel.id,
-            name: selectedModel.name,
-            file: selectedModel.file,
-            type: selectedModel.type
-          };
-          result.inferenceParams = { modelConf, iouThreshold, inferImgsz, modelId: selectedModel.id };
-          console.log(`[Detect] Python子进程推理完成，模型=${selectedModel.file}，检出 ${result.totalDetections} 处病害 (conf=${modelConf} iou=${iouThreshold} imgsz=${inferImgsz})`);
-        }
-      } catch (localErr) {
-        console.error('[Detect] Python推理失败:');
-        console.error('  message:', localErr.message);
-        if (localErr.stderr) console.error('  stderr:', String(localErr.stderr).slice(0, 800));
-        if (localErr.stdout) console.error('  stdout:', String(localErr.stdout).slice(0, 400));
-        if (localErr.code) console.error('  exit code:', localErr.code);
-        if (localErr.signal) console.error('  signal:', localErr.signal);
-      }
-    }
-
-    // 模型推理失败时直接返回错误，不使用演示数据
-    if (!result) {
-      return res.json({
-        code: 500,
-        message: '模型推理失败，请检查服务器日志',
-        data: null
-      });
-    }
-
-    result.isDemo = isDemo;
-    result.inferenceParams = result.inferenceParams || { modelConf, iouThreshold, inferImgsz, modelId: selectedModel.id };
-
-    result.brickLengthMm = brickLengthMm;
-
-    // 保存检测历史记录
-    try {
-      const diseaseTypes = [...new Set((result.detections || []).map(d => d.class))];
-      addHistoryRecord({
-        projectName: req.body.projectName || '单图检测',
-        imageName: req.file.originalname,
-        wallSize: `${imageWidth}x${imageHeight}`,
-        diseaseTypes,
-        diseaseCount: result.totalDetections || 0,
-        resultImageUrl: imagePath,
-        reportUrl: null
-      });
-    } catch (histErr) {
-      console.error('保存历史记录失败:', histErr.message);
-    }
-
-    // 记录操作日志
-    try {
-      const username = req.user?.username || '匿名';
-      logAction({
-        username,
-        logType: 'DETECTION',
-        operation: `上传图片 ${req.file.originalname} 进行病害检测，检出 ${result.totalDetections || 0} 处病害`,
-        ipAddress: req.ip || req.connection.remoteAddress,
-        status: 'success',
-        message: usedLocalModel ? '使用本地YOLOv11模型' : (paiApiUrl ? '使用PAI模型' : '演示模式'),
-        requestUrl: '/api/detect',
-        requestMethod: 'POST'
-      });
-    } catch (logErr) {
-      console.error('记录日志失败:', logErr.message);
-    }
-
-    res.json(result);
   } catch (error) {
-    console.error('Detection error:', error);
-    res.status(500).json({ success: false, message: '检测失败: ' + error.message });
+    if (!res.headersSent) {
+      console.error('Detection error:', error);
+      res.status(500).json({ success: false, message: '检测失败: ' + error.message });
+    }
   }
+});
+
+// --- 查询单图检测任务状态 ---
+app.get('/api/detect/:jobId/status', (req, res) => {
+  const jr = detectJobStore.get(req.params.jobId);
+  if (!jr) return res.status(404).json({ success: false, message: '任务不存在或已过期（最多保留30分钟）' });
+  const q = getInferQueue();
+  const position = jr.status === 'queued' ? q.aheadOf(req.params.jobId) : 0;
+  res.json({
+    success: true, status: jr.status, position,
+    message: jr.status === 'queued'     ? `排队中，前面还有 ${position} 位`
+           : jr.status === 'processing' ? '推理中...'
+           : jr.status === 'done'       ? '已完成'
+           : '推理失败',
+    result: jr.status === 'done'  ? jr.result : null,
+    error:  jr.status === 'error' ? jr.error  : null
+  });
 });
 
 // 工程量单价估算（元/m² 或 元/处）
@@ -1344,7 +1412,16 @@ async function stitchAnnotatedTiles(job, tiles) {
 
   if (composites.length === 0) return null;
 
-  const stitchedFilename = `${job.jobId}_stitched.jpg`;
+  // 每次分析使用带时间戳的唯一文件名，防止浏览器缓存旧结果
+  const tilesDir = path.join(__dirname, 'uploads/tiles');
+  try {
+    for (const f of fs.readdirSync(tilesDir)) {
+      if (f.startsWith(`${job.jobId}_`) && f.endsWith('_stitched.jpg')) {
+        fs.unlinkSync(path.join(tilesDir, f));
+      }
+    }
+  } catch (_) {}
+  const stitchedFilename = `${job.jobId}_${Date.now()}_stitched.jpg`;
   const stitchedPath = path.join(__dirname, 'uploads/tiles', stitchedFilename);
 
   await sharp({ create: { width: W, height: H, channels: 3, background: { r: 30, g: 30, b: 30 } } })
@@ -1407,6 +1484,40 @@ function mapTileDetectionToGlobal(det, tile, job) {
     areaM2: Number(areaM2.toFixed(4)),
     sourceTileUrl: tile.tileUrl
   };
+}
+
+// --- 跨切片全局 NMS（去除重叠区域的重复检测）---
+function computeIoU(bboxA, bboxB) {
+  // [x, y, w, h]
+  const ax2 = bboxA[0] + bboxA[2], ay2 = bboxA[1] + bboxA[3];
+  const bx2 = bboxB[0] + bboxB[2], by2 = bboxB[1] + bboxB[3];
+  const ix1 = Math.max(bboxA[0], bboxB[0]), iy1 = Math.max(bboxA[1], bboxB[1]);
+  const ix2 = Math.min(ax2, bx2),           iy2 = Math.min(ay2, by2);
+  const interArea = Math.max(0, ix2 - ix1) * Math.max(0, iy2 - iy1);
+  const unionArea = bboxA[2] * bboxA[3] + bboxB[2] * bboxB[3] - interArea;
+  return unionArea <= 0 ? 0 : interArea / unionArea;
+}
+
+function applyGlobalNMS(detections, iouThreshold = 0.45) {
+  const byClass = {};
+  for (const det of detections) {
+    (byClass[det.class] = byClass[det.class] || []).push(det);
+  }
+  const kept = [];
+  for (const cls of Object.keys(byClass)) {
+    const dets = [...byClass[cls]].sort((a, b) => b.confidence - a.confidence);
+    const suppressed = new Array(dets.length).fill(false);
+    for (let i = 0; i < dets.length; i++) {
+      if (suppressed[i]) continue;
+      kept.push(dets[i]);
+      for (let j = i + 1; j < dets.length; j++) {
+        if (!suppressed[j] && computeIoU(dets[i].globalBbox, dets[j].globalBbox) > iouThreshold) {
+          suppressed[j] = true;
+        }
+      }
+    }
+  }
+  return kept.map((d, idx) => ({ ...d, id: idx + 1 }));
 }
 
 // --- 检测框中心点 ---
@@ -1555,206 +1666,208 @@ app.post('/api/facade/analyze/:jobId', async (req, res) => {
     const job = loadFacadeJob(req.params.jobId);
     if (!job) return res.status(404).json({ success: false, message: '立面任务不存在' });
 
-    const requestedTileSize = Number(req.body?.tileSize);
+    const requestedTileSize    = Number(req.body?.tileSize);
     const requestedOverlapRatio = Number(req.body?.overlapRatio);
-    const requestedGridMode = Number(req.body?.gridMode);
-    if (Number.isFinite(requestedTileSize) && requestedTileSize >= 640) {
-      job.tileSize = requestedTileSize;
-    }
-    if (Number.isFinite(requestedOverlapRatio) && requestedOverlapRatio >= 0 && requestedOverlapRatio < 0.5) {
-      job.overlapRatio = requestedOverlapRatio;
-    }
-    if ([2, 3, 4].includes(requestedGridMode)) {
-      job.gridMode = requestedGridMode;
-    }
+    const requestedGridMode    = Number(req.body?.gridMode);
+    if (Number.isFinite(requestedTileSize) && requestedTileSize >= 640) job.tileSize = requestedTileSize;
+    if (Number.isFinite(requestedOverlapRatio) && requestedOverlapRatio >= 0 && requestedOverlapRatio < 0.5) job.overlapRatio = requestedOverlapRatio;
+    if ([2, 3, 4].includes(requestedGridMode)) job.gridMode = requestedGridMode;
 
-    // ── 置信度 & IoU 阈值（与单图检测相同的合理范围限制）──
     const _rc = parseFloat(req.body?.modelConf);
     const _ri = parseFloat(req.body?.iouThreshold);
-    job.modelConf     = Number.isFinite(_rc) ? Math.max(0.05, Math.min(0.95, _rc)) : (job.modelConf     ?? getDefaultModelConf());
-    job.iouThreshold  = Number.isFinite(_ri) ? Math.max(0.10, Math.min(0.90, _ri)) : (job.iouThreshold  ?? getDefaultIouThreshold());
+    job.modelConf    = Number.isFinite(_rc) ? Math.max(0.05, Math.min(0.95, _rc)) : (job.modelConf    ?? getDefaultModelConf());
+    job.iouThreshold = Number.isFinite(_ri) ? Math.max(0.10, Math.min(0.90, _ri)) : (job.iouThreshold ?? getDefaultIouThreshold());
 
-    // ── 自定义分割线（用户拖拽调整的切片位置，0..1 分数数组）──
     const rawV = req.body?.customVDividers;
     const rawH = req.body?.customHDividers;
     const expectedLen = (job.gridMode || 3) - 1;
-    if (Array.isArray(rawV) && rawV.length === expectedLen) {
-      job.customVDividers = rawV.map(Number).filter(n => n > 0 && n < 1);
-    }
-    if (Array.isArray(rawH) && rawH.length === expectedLen) {
-      job.customHDividers = rawH.map(Number).filter(n => n > 0 && n < 1);
-    }
+    if (Array.isArray(rawV) && rawV.length === expectedLen) job.customVDividers = rawV.map(Number).filter(n => n > 0 && n < 1);
+    if (Array.isArray(rawH) && rawH.length === expectedLen) job.customHDividers = rawH.map(Number).filter(n => n > 0 && n < 1);
 
-    // ── ROI 裁剪：如果前端传入了选区坐标，先将图像裁剪到 ROI ──
-    const cropX = Number(req.body?.cropX);
-    const cropY = Number(req.body?.cropY);
-    const cropW = Number(req.body?.cropWidth);
-    const cropH = Number(req.body?.cropHeight);
-
-    if (Number.isFinite(cropX) && Number.isFinite(cropY) &&
-        Number.isFinite(cropW) && cropW > 64 &&
-        Number.isFinite(cropH) && cropH > 64) {
-      const rx = Math.max(0, Math.round(cropX));
-      const ry = Math.max(0, Math.round(cropY));
-      const rw = Math.min(job.imageWidth  - rx, Math.round(cropW));
-      const rh = Math.min(job.imageHeight - ry, Math.round(cropH));
+    // ROI 裁剪（同步完成，背景任务需要 roiSourcePath）
+    const cropX = Number(req.body?.cropX), cropY = Number(req.body?.cropY);
+    const cropW = Number(req.body?.cropWidth), cropH = Number(req.body?.cropHeight);
+    if (Number.isFinite(cropX) && Number.isFinite(cropY) && Number.isFinite(cropW) && cropW > 64 && Number.isFinite(cropH) && cropH > 64) {
+      const rx = Math.max(0, Math.round(cropX)), ry = Math.max(0, Math.round(cropY));
+      const rw = Math.min(job.imageWidth - rx, Math.round(cropW)), rh = Math.min(job.imageHeight - ry, Math.round(cropH));
       if (rw > 64 && rh > 64) {
         const roiPath = path.join(__dirname, 'uploads/tiles', `${job.jobId}_roi.jpg`);
-        await sharp(job.sourceImagePath)
-          .extract({ left: rx, top: ry, width: rw, height: rh })
-          .jpeg({ quality: 95 })
-          .toFile(roiPath);
-        // 记录 ROI 参数：切片时使用裁剪图，偏移量加入 tile offsetX/Y
-        job.roiSourcePath  = roiPath;
-        job.cropOffsetX    = rx;
-        job.cropOffsetY    = ry;
-        job.roiImageWidth  = rw;
-        job.roiImageHeight = rh;
-        console.log(`[FacadeROI] 已裁剪选区 (${rx},${ry}) ${rw}×${rh}px → ${roiPath}`);
+        await sharp(job.sourceImagePath).extract({ left: rx, top: ry, width: rw, height: rh }).jpeg({ quality: 95 }).toFile(roiPath);
+        job.roiSourcePath = roiPath; job.cropOffsetX = rx; job.cropOffsetY = ry;
+        job.roiImageWidth = rw; job.roiImageHeight = rh;
+        console.log(`[FacadeROI] 已裁剪选区 (${rx},${ry}) ${rw}×${rh}px`);
       }
-    }
-
-    job.status = 'tiling';
-    job.progress = 5;
-    saveFacadeJob(job);
-
-    // 优先使用用户选择的 N×N 网格模式，否则回退到滑动窗口切片
-    const tiles = job.gridMode
-      ? await createFacadeGridTiles(job)
-      : await createFacadeTiles(job);
-    job.tiles = tiles;
-    job.status = 'detecting';
-    job.progress = 20;
-    saveFacadeJob(job);
-
-    const detections = [];
-    let detectionId = 1;
-
-    let failedTiles = 0;
-    const analysisStart = Date.now();
-    for (let i = 0; i < tiles.length; i++) {
-      const tile = tiles[i];
-      // 前置检查：切片文件是否真实存在
-      if (!fs.existsSync(tile.tilePath)) {
-        failedTiles += 1;
-        tile.status = 'failed';
-        tile.errorMsg = `切片文件不存在: ${tile.tilePath}`;
-        console.error(`[Facade] ❌ 切片 ${tile.tileId} 文件缺失，已跳过`);
-        job.progress = Math.round(20 + ((i + 1) / tiles.length) * 60);
-        saveFacadeJob(job);
-        continue;
-      }
-      try {
-        const tileStart = Date.now();
-        const paiResult = await callPaiForTile(tile.tilePath, job.modelConf, job.iouThreshold);
-        const rawDetections = paiResult.detections || [];
-
-        let tileDetectionCount = 0;
-        rawDetections.forEach(raw => {
-          const globalDetection = mapTileDetectionToGlobal({ ...raw, id: detectionId }, tile, job);
-          if (['风化', '泛碱', '裂缝', '植物附着', '缺损'].includes(globalDetection.class)) {
-            detections.push(globalDetection);
-            detectionId += 1;
-            tileDetectionCount += 1;
-          }
-        });
-
-        tile.annotatedTilePath = paiResult.annotatedTilePath || null;
-        tile.annotatedTileUrl  = paiResult.annotatedTileUrl  || null;
-        tile.detectionCount    = tileDetectionCount;
-        tile.status = 'detected';
-        if (DEBUG_MODE) {
-          console.log(`[Facade] ✅ [${i+1}/${tiles.length}] ${tile.tileId} 检出 ${tileDetectionCount} 处，耗时 ${Date.now()-tileStart}ms`);
-        }
-      } catch (tileErr) {
-        failedTiles += 1;
-        tile.status = 'failed';
-        tile.errorMsg = tileErr.message || String(tileErr);
-        console.error(`[Facade] ❌ [${i+1}/${tiles.length}] 切片 ${tile.tileId} 推理失败（跳过）`);
-        console.error(`          错误: ${tileErr.message}`);
-        if (DEBUG_MODE) {
-          console.error(`          堆栈: ${tileErr.stack || '(无堆栈信息)'}`);
-        }
-      }
-
-      job.progress = Math.round(20 + ((i + 1) / tiles.length) * 60);
-      saveFacadeJob(job);
-    }
-
-    const analysisMs = Date.now() - analysisStart;
-    const succeeded = tiles.length - failedTiles;
-    if (failedTiles > 0) {
-      console.warn(`[Facade] ⚠️  共 ${failedTiles}/${tiles.length} 块切片推理失败，${succeeded} 块成功，总耗时 ${(analysisMs/1000).toFixed(1)}s`);
     } else {
-      console.log(`[Facade] ✅ 所有 ${tiles.length} 块切片推理完成，共检出 ${detections.length} 处，总耗时 ${(analysisMs/1000).toFixed(1)}s`);
+      // 未指定 ROI，清除上次遗留的裁剪信息，使用全图分析
+      job.roiSourcePath  = null;
+      job.cropOffsetX    = 0;
+      job.cropOffsetY    = 0;
+      job.roiImageWidth  = 0;
+      job.roiImageHeight = 0;
     }
 
-    // 拼合所有标注切片 → 生成整墙标注大图
-    job.status = 'stitching';
-    saveFacadeJob(job);
-    let stitchResult = null;
-    try {
-      stitchResult = await stitchAnnotatedTiles(job, tiles);
-    } catch (se) {
-      console.error('[Facade] 切片拼合失败（非致命）:', se.message);
+    // 队列检查
+    const q = getInferQueue();
+    if (q.running >= q.maxConcurrent && q.pending.length >= q.maxQueueSize) {
+      return res.status(503).json({ success: false, message: `服务器繁忙，推理队列已满（最多排 ${q.maxQueueSize} 位），请稍后再试` });
     }
-
-    const grids = buildFacadeGrid(job, detections);
-    const summary = buildFacadeSummary(grids, detections);
-
-    job.status = 'finished';
-    job.progress = 100;
-    job.detections = detections;
-    job.grids = grids;
-    job.summary = summary;
+    const position = q.running >= q.maxConcurrent ? q.running + q.pending.length : 0;
+    // 重置任务状态和旧结果，防止轮询返回上次的缓存数据
+    job.status        = position > 0 ? 'queued' : 'analyzing';
+    job.queueStatus   = position > 0 ? 'queued' : 'analyzing';
+    job.queuePosition = position;
+    job.finalResponse = null;
+    job.tilesProcessed = 0;
+    job.tilesTotal     = 0;
     saveFacadeJob(job);
 
-    const cropOffX = job.cropOffsetX || 0;
-    const cropOffY = job.cropOffsetY || 0;
-    const stitchedW = job.roiImageWidth  || job.imageWidth;
-    const stitchedH = job.roiImageHeight || job.imageHeight;
-
-    // 对外只暴露 URL，不暴露服务器绝对路径
-    const publicTiles = tiles.map((t, idx) => ({
-      tileId: t.tileId, index: idx + 1,
-      rowIndex: t.rowIndex, colIndex: t.colIndex,
-      offsetX: t.offsetX, offsetY: t.offsetY,
-      // 在拼合图中的坐标（去掉 ROI 偏移）
-      stitchedOffsetX: Math.max(0, t.offsetX - cropOffX),
-      stitchedOffsetY: Math.max(0, t.offsetY - cropOffY),
-      width: t.width, height: t.height,
-      tileUrl: t.tileUrl,
-      annotatedTileUrl: t.annotatedTileUrl || null,
-      detectionCount: t.detectionCount || 0,
-      status: t.status,
-      // 调试模式下暴露错误原因，方便前端提示
-      errorMsg: (DEBUG_MODE && t.errorMsg) ? t.errorMsg : undefined
-    }));
-
+    // 立即响应
     res.json({
-      success: true, jobId: job.jobId, status: job.status, progress: job.progress,
-      sourceImageUrl: job.sourceImageUrl,
-      imageWidth: job.imageWidth, imageHeight: job.imageHeight,
-      wallWidthM: job.wallWidthM, wallHeightM: job.wallHeightM, gridSizeM: job.gridSizeM,
-      totalTiles: tiles.length, failedTiles, totalDetections: detections.length,
-      // 拼合标注大图
-      stitchedImageUrl: stitchResult?.url  || null,
-      stitchedWidth:    stitchResult ? stitchedW : null,
-      stitchedHeight:   stitchResult ? stitchedH : null,
-      grids, detections, summary,
-      tiles: publicTiles
+      success: true, jobId: job.jobId,
+      status: job.queueStatus, position,
+      message: position > 0 ? `排队中，前面还有 ${position} 位` : '开始分析...'
     });
+
+    // 切片 + 推理 + 拼合放入队列后台执行
+    q.enqueue(job.jobId, async () => {
+      const j = loadFacadeJob(job.jobId);
+      j.queueStatus = 'analyzing'; j.queuePosition = 0;
+      j.status = 'tiling'; j.progress = 5;
+      saveFacadeJob(j);
+
+      const tiles = j.gridMode ? await createFacadeGridTiles(j) : await createFacadeTiles(j);
+      j.tiles = tiles; j.status = 'detecting'; j.progress = 20;
+      j.tilesTotal = tiles.length; j.tilesProcessed = 0;
+      saveFacadeJob(j);
+
+      const detections = []; let detectionId = 1, failedTiles = 0;
+      const analysisStart = Date.now();
+
+      for (let i = 0; i < tiles.length; i++) {
+        const tile = tiles[i];
+        if (!fs.existsSync(tile.tilePath)) {
+          failedTiles++; tile.status = 'failed'; tile.errorMsg = `切片文件不存在: ${tile.tilePath}`;
+          console.error(`[Facade] ❌ 切片 ${tile.tileId} 文件缺失，已跳过`);
+          j.progress = Math.round(20 + ((i + 1) / tiles.length) * 60); saveFacadeJob(j); continue;
+        }
+        try {
+          const tileStart = Date.now();
+          const paiResult = await callPaiForTile(tile.tilePath, j.modelConf, j.iouThreshold);
+          let tileDetectionCount = 0;
+          (paiResult.detections || []).forEach(raw => {
+            const gDet = mapTileDetectionToGlobal({ ...raw, id: detectionId }, tile, j);
+            if (['风化','泛碱','裂缝','植物附着','缺损'].includes(gDet.class)) { detections.push(gDet); detectionId++; tileDetectionCount++; }
+          });
+          tile.annotatedTilePath = paiResult.annotatedTilePath || null;
+          tile.annotatedTileUrl  = paiResult.annotatedTileUrl  || null;
+          tile.detectionCount    = tileDetectionCount; tile.status = 'detected';
+          if (DEBUG_MODE) console.log(`[Facade] ✅ [${i+1}/${tiles.length}] ${tile.tileId} 检出 ${tileDetectionCount} 处，耗时 ${Date.now()-tileStart}ms`);
+        } catch (tileErr) {
+          failedTiles++; tile.status = 'failed'; tile.errorMsg = tileErr.message || String(tileErr);
+          console.error(`[Facade] ❌ [${i+1}/${tiles.length}] 切片 ${tile.tileId} 推理失败（跳过）: ${tileErr.message}`);
+          if (DEBUG_MODE) console.error(`  堆栈: ${tileErr.stack || '(无堆栈信息)'}`);
+        }
+        j.tilesProcessed = i + 1;
+        j.progress = Math.round(20 + ((i + 1) / tiles.length) * 60);
+        saveFacadeJob(j);
+      }
+
+      const analysisMs = Date.now() - analysisStart;
+      const beforeNMS = detections.length;
+      // 跨切片全局 NMS：去除重叠区域的重复框
+      const dedupedDetections = applyGlobalNMS(detections, j.iouThreshold);
+      const removedByNMS = beforeNMS - dedupedDetections.length;
+      if (removedByNMS > 0) {
+        console.log(`[Facade] 🔄 全局 NMS 去重：${beforeNMS} → ${dedupedDetections.length} 处（去除 ${removedByNMS} 个跨切片重复框，IoU > ${j.iouThreshold}）`);
+      }
+      // 用去重后的结果更新各切片计数
+      const tileCountMap = {};
+      for (const det of dedupedDetections) tileCountMap[det.tileId] = (tileCountMap[det.tileId] || 0) + 1;
+      for (const tile of tiles) tile.detectionCount = tileCountMap[tile.tileId] || 0;
+
+      // 替换原始 detections 数组（后续 buildFacadeGrid 等使用去重结果）
+      detections.length = 0; dedupedDetections.forEach(d => detections.push(d));
+
+      if (failedTiles > 0) console.warn(`[Facade] ⚠️  共 ${failedTiles}/${tiles.length} 块失败，总耗时 ${(analysisMs/1000).toFixed(1)}s`);
+      else console.log(`[Facade] ✅ 所有 ${tiles.length} 块完成，最终检出 ${detections.length} 处（去重后），总耗时 ${(analysisMs/1000).toFixed(1)}s`);
+
+      j.status = 'stitching'; saveFacadeJob(j);
+      let stitchResult = null;
+      try { stitchResult = await stitchAnnotatedTiles(j, tiles); } catch (se) { console.error('[Facade] 拼合失败（非致命）:', se.message); }
+
+      const grids = buildFacadeGrid(j, detections);
+      const summary = buildFacadeSummary(grids, detections);
+      j.status = 'finished'; j.progress = 100;
+      j.detections = detections; j.grids = grids; j.summary = summary;
+
+      const cropOffX = j.cropOffsetX || 0, cropOffY = j.cropOffsetY || 0;
+      const stitchedW = j.roiImageWidth || j.imageWidth, stitchedH = j.roiImageHeight || j.imageHeight;
+      // 防止浏览器缓存：对所有图片 URL 附加运行时间戳
+      const rv = Date.now();
+      const publicTiles = tiles.map((t, idx) => ({
+        tileId: t.tileId, index: idx + 1,
+        rowIndex: t.rowIndex, colIndex: t.colIndex,
+        offsetX: t.offsetX, offsetY: t.offsetY,
+        stitchedOffsetX: Math.max(0, t.offsetX - cropOffX),
+        stitchedOffsetY: Math.max(0, t.offsetY - cropOffY),
+        width: t.width, height: t.height,
+        tileUrl: t.tileUrl ? `${t.tileUrl}?v=${rv}` : null,
+        annotatedTileUrl: t.annotatedTileUrl ? `${t.annotatedTileUrl}?v=${rv}` : null,
+        detectionCount: t.detectionCount || 0, status: t.status,
+        errorMsg: (DEBUG_MODE && t.errorMsg) ? t.errorMsg : undefined
+      }));
+
+      j.finalResponse = {
+        success: true, jobId: j.jobId, status: j.status, progress: j.progress,
+        sourceImageUrl: j.sourceImageUrl ? `${j.sourceImageUrl}?v=${rv}` : null,
+        imageWidth: j.imageWidth, imageHeight: j.imageHeight,
+        wallWidthM: j.wallWidthM, wallHeightM: j.wallHeightM, gridSizeM: j.gridSizeM,
+        totalTiles: tiles.length, failedTiles, totalDetections: detections.length,
+        stitchedImageUrl: stitchResult ? `${stitchResult.url}?v=${rv}` : null,
+        stitchedWidth: stitchResult ? stitchedW : null, stitchedHeight: stitchResult ? stitchedH : null,
+        grids, detections, summary, tiles: publicTiles
+      };
+      saveFacadeJob(j);
+    }).catch(err => {
+      try {
+        const j = loadFacadeJob(job.jobId);
+        if (j) { j.status = 'error'; j.errorMsg = err.message; saveFacadeJob(j); }
+      } catch (_) {}
+      console.error('[Facade] 后台分析任务异常:', err.message);
+    });
+
   } catch (error) {
-    console.error('Facade analyze error:', error);
-    res.status(500).json({ success: false, message: '立面普查分析失败: ' + error.message });
+    if (!res.headersSent) {
+      console.error('Facade analyze error:', error);
+      res.status(500).json({ success: false, message: '立面普查分析失败: ' + error.message });
+    }
   }
 });
 
-// --- 查询立面任务 ---
+// --- 查询立面任务状态 / 获取完整结果 ---
 app.get('/api/facade/job/:jobId', (req, res) => {
   const job = loadFacadeJob(req.params.jobId);
   if (!job) return res.status(404).json({ success: false, message: '立面任务不存在' });
-  res.json({ success: true, job });
+  // 分析已完成：直接返回完整结果
+  if (job.status === 'finished' && job.finalResponse) return res.json(job.finalResponse);
+  // 分析中 / 排队中：返回进度信息
+  const qs = job.queueStatus || job.status;
+  const qpos = job.queuePosition || 0;
+  const tilesProcessed = job.tilesProcessed || 0;
+  const tilesTotal     = job.tilesTotal     || 0;
+  const tileMsg = tilesTotal > 0 ? `已对 ${tilesProcessed}/${tilesTotal} 块切片分析完成` : '';
+  res.json({
+    success: true, jobId: job.jobId, status: qs, position: qpos,
+    progress: job.progress || 0,
+    tilesProcessed, tilesTotal,
+    message: qs === 'queued'    ? `排队中，前面还有 ${qpos} 位`
+           : qs === 'analyzing' || qs === 'detecting'
+               ? (tileMsg || `AI 推理中 ${job.progress || 0}%`)
+           : qs === 'tiling'    ? '正在切片...'
+           : qs === 'stitching' ? '正在拼合图片...'
+           : qs === 'error'     ? `分析失败: ${job.errorMsg || '未知错误'}`
+           : '等待中'
+  });
 });
 
 // --- 预留"序列影像自动合成"接口 ---

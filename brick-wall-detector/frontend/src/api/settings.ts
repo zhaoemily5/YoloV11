@@ -11,6 +11,8 @@ export interface SystemSettings {
   storageType: string
   cacheLimit: number
   cacheStrategy: string
+  maxConcurrent: number
+  maxQueueSize: number
 }
 
 export function getSystemSettings() {

@@ -12,7 +12,8 @@ const tokens = new Map();
 let dataDir;
 
 export function initAuth(app, __dirname, opts = {}) {
-  const resolveModelPath = opts.resolveModelPath || null;
+  const resolveModelPath   = opts.resolveModelPath   || null;
+  const onSettingsUpdate   = opts.onSettingsUpdate   || null;
   dataDir = path.join(__dirname, 'data');
   if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
@@ -382,6 +383,7 @@ export function initAuth(app, __dirname, opts = {}) {
     const settingsFile = path.join(dataDir, 'settings.json');
     const newSettings = req.body;
     fs.writeFileSync(settingsFile, JSON.stringify(newSettings, null, 2));
+    onSettingsUpdate?.();
 
     addLog({
       username: req.user.username,
@@ -409,9 +411,12 @@ export function initAuth(app, __dirname, opts = {}) {
       enableAutoReport: true,
       storageType: '本地存储',
       cacheLimit: 500,
-      cacheStrategy: 'LRU'
+      cacheStrategy: 'LRU',
+      maxConcurrent: 1,
+      maxQueueSize: 10
     };
     fs.writeFileSync(settingsFile, JSON.stringify(defaultSettings, null, 2));
+    onSettingsUpdate?.();
 
     addLog({
       username: req.user.username,

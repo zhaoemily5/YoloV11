@@ -149,25 +149,18 @@
         </div>
       </div>
 
-      <!-- Section 3: Priority -->
+      <!-- Section 3: Repair suggestions (flat list) -->
       <div class="rpt-section">
         <div class="section-head">
           <span class="sec-num">03</span>
-          <h3>修缮优先级计划</h3>
+          <h3>修缮建议</h3>
         </div>
-
-        <div v-if="report.repairPlan.urgentItems.length" class="pri-block urgent">
-          <div class="pri-head"><span class="pri-dot urgent-dot"></span><h4>紧急处理（重度）</h4></div>
-          <ul><li v-for="it in report.repairPlan.urgentItems" :key="it.name"><b>{{ it.name }}</b> — {{ it.count }} 处，建议立即修缮</li></ul>
-        </div>
-        <div v-if="report.repairPlan.importantItems.length" class="pri-block important">
-          <div class="pri-head"><span class="pri-dot important-dot"></span><h4>重点关注（中度）</h4></div>
-          <ul><li v-for="it in report.repairPlan.importantItems" :key="it.name"><b>{{ it.name }}</b> — {{ it.count }} 处，尽快安排修缮</li></ul>
-        </div>
-        <div v-if="report.repairPlan.routineItems.length" class="pri-block routine">
-          <div class="pri-head"><span class="pri-dot routine-dot"></span><h4>常规维护（轻度）</h4></div>
-          <ul><li v-for="it in report.repairPlan.routineItems" :key="it.name"><b>{{ it.name }}</b> — {{ it.count }} 处，纳入日常维护</li></ul>
-        </div>
+        <ul v-if="allRepairItems.length" class="repair-list">
+          <li v-for="it in allRepairItems" :key="it.name">
+            <b>{{ it.name }}</b> — {{ it.count }} 处，{{ it.suggestion }}
+          </li>
+        </ul>
+        <div v-else class="no-repair">无需修缮项目</div>
       </div>
 
       <!-- Section 4: Grid Analysis -->
@@ -190,11 +183,6 @@
                 <span v-for="(count, disease) in row.diseases" :key="String(disease)" class="grid-disease-tag">
                   {{ disease }}: {{ count }}
                 </span>
-              </template>
-            </el-table-column>
-            <el-table-column prop="priority" label="优先级" width="80">
-              <template #default="{ row }">
-                <span class="priority-badge" :class="'p' + row.priority">P{{ row.priority }}</span>
               </template>
             </el-table-column>
           </el-table>
@@ -220,6 +208,15 @@ const props = defineProps<{ report: any }>()
 const riskClass = computed(() => {
   const r = props.report.overallAssessment.overallRisk
   return r === '高风险' ? 'risk-high' : r === '中风险' ? 'risk-mid' : 'risk-low'
+})
+
+const allRepairItems = computed(() => {
+  const rp = props.report.repairPlan
+  return [
+    ...(rp.urgentItems  || []).map((it: any) => ({ ...it, suggestion: '建议立即修缮' })),
+    ...(rp.importantItems || []).map((it: any) => ({ ...it, suggestion: '尽快安排修缮' })),
+    ...(rp.routineItems  || []).map((it: any) => ({ ...it, suggestion: '纳入日常维护' }))
+  ]
 })
 
 function sevType(s: string) { return s === '重度' ? 'danger' : s === '中度' ? 'warning' : 'success' }
@@ -355,21 +352,19 @@ function exportMarkdown() {
   })
 
   // Section 3
-  lines.push('## 03 修缮优先级计划')
+  lines.push('## 03 修缮建议')
   lines.push('')
-  const blocks: { key: string; title: string; suffix: string }[] = [
-    { key: 'urgentItems', title: '🔴 紧急处理（重度）', suffix: '建议立即修缮' },
-    { key: 'importantItems', title: '🟠 重点关注（中度）', suffix: '尽快安排修缮' },
-    { key: 'routineItems', title: '🟢 常规维护（轻度）', suffix: '纳入日常维护' }
+  const allItems = [
+    ...(r.repairPlan?.urgentItems  || []).map((it: any) => ({ ...it, suffix: '建议立即修缮' })),
+    ...(r.repairPlan?.importantItems || []).map((it: any) => ({ ...it, suffix: '尽快安排修缮' })),
+    ...(r.repairPlan?.routineItems  || []).map((it: any) => ({ ...it, suffix: '纳入日常维护' }))
   ]
-  blocks.forEach(b => {
-    const items = r.repairPlan?.[b.key] || []
-    if (!items.length) return
-    lines.push(`### ${b.title}`)
-    lines.push('')
-    items.forEach((it: any) => lines.push(`- **${it.name}** — ${it.count} 处，${b.suffix}`))
-    lines.push('')
-  })
+  if (allItems.length) {
+    allItems.forEach((it: any) => lines.push(`- **${it.name}** — ${it.count} 处，${it.suffix}`))
+  } else {
+    lines.push('无需修缮项目')
+  }
+  lines.push('')
 
   lines.push('---')
   lines.push('')
@@ -407,21 +402,14 @@ function exportWord() {
     </div>`
   }).join('')
 
-  const priorityHtml = ([
-    { key: 'urgentItems', title: '紧急处理（重度）', color: '#dc2626', suffix: '建议立即修缮' },
-    { key: 'importantItems', title: '重点关注（中度）', color: '#d97706', suffix: '尽快安排修缮' },
-    { key: 'routineItems', title: '常规维护（轻度）', color: '#16a34a', suffix: '纳入日常维护' }
-  ] as const).map(b => {
-    const items = r.repairPlan?.[b.key] || []
-    if (!items.length) return ''
-    return `
-      <div style="border:1px solid #ddd;border-radius:4px;padding:10px 14px;margin-bottom:10px;">
-        <h4 style="margin:0 0 6px;color:${b.color};">${b.title}</h4>
-        <ul style="margin:0 0 0 24px;">
-          ${items.map((it: any) => `<li><b>${esc(it.name)}</b> — ${it.count} 处，${b.suffix}</li>`).join('')}
-        </ul>
-      </div>`
-  }).join('')
+  const allRepairList = [
+    ...(r.repairPlan?.urgentItems  || []).map((it: any) => ({ ...it, suffix: '建议立即修缮' })),
+    ...(r.repairPlan?.importantItems || []).map((it: any) => ({ ...it, suffix: '尽快安排修缮' })),
+    ...(r.repairPlan?.routineItems  || []).map((it: any) => ({ ...it, suffix: '纳入日常维护' }))
+  ]
+  const priorityHtml = allRepairList.length
+    ? `<ul style="margin:0 0 0 24px;">${allRepairList.map((it: any) => `<li><b>${esc(it.name)}</b> — ${it.count} 处，${it.suffix}</li>`).join('')}</ul>`
+    : '<p>无需修缮项目</p>'
 
   const html = `<!DOCTYPE html>
 <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
@@ -463,7 +451,7 @@ function exportWord() {
   <h2>02 五类病害详情与修缮方案</h2>
   ${diseaseHtml}
 
-  <h2>03 修缮优先级计划</h2>
+  <h2>03 修缮建议</h2>
   ${priorityHtml || '<p>无需修缮</p>'}
 </body>
 </html>`
@@ -570,19 +558,10 @@ function exportWord() {
   flex-shrink:0; margin-top:2px;
 }
 
-/* Priority blocks */
-.pri-block { border-radius:10px; padding:16px 20px; margin-bottom:12px; }
-.pri-head { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
-.pri-head h4 { font-size:15px; margin:0; color:#333; }
-.pri-dot { width:10px; height:10px; border-radius:50%; flex-shrink:0; }
-.urgent-dot { background:#dc2626; }
-.important-dot { background:#d97706; }
-.routine-dot { background:#16a34a; }
-.pri-block ul { padding-left:24px; margin:0; }
-.pri-block li { margin-bottom:4px; font-size:14px; color:#444; line-height:1.6; }
-.pri-block.urgent { background:#fff5f5; border:1px solid #fecaca; }
-.pri-block.important { background:#fffbeb; border:1px solid #fde68a; }
-.pri-block.routine { background:#f0fdf4; border:1px solid #bbf7d0; }
+/* Repair list */
+.repair-list { padding-left:24px; margin:0; }
+.repair-list li { margin-bottom:8px; font-size:14px; color:#444; line-height:1.7; }
+.no-repair { color:#888; text-align:center; padding:16px; font-size:14px; }
 
 /* Cost card */
 .ac-gold { background:linear-gradient(135deg,#d97706,#fbbf24); }
@@ -613,13 +592,6 @@ function exportWord() {
   display:inline-block; background:#e6f2fb; color:#0070C0;
   padding:2px 8px; border-radius:4px; font-size:12px; margin-right:6px; margin-bottom:4px;
 }
-.priority-badge {
-  display:inline-block; padding:2px 8px; border-radius:4px;
-  font-size:12px; font-weight:700; color:#fff;
-}
-.priority-badge.p1 { background:#dc2626; }
-.priority-badge.p2 { background:#d97706; }
-.priority-badge.p3 { background:#16a34a; }
 
 /* Report bottom */
 .rpt-bottom {

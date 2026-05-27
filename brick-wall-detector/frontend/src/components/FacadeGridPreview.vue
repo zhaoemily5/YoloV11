@@ -15,7 +15,7 @@
     </div>
 
     <!-- ── Interactive canvas ── -->
-    <div class="fgp-container" ref="containerRef" :style="cursorStyle">
+    <div class="fgp-container" ref="containerRef" :style="containerStyle">
       <!-- Base image -->
       <img ref="imgRef" :src="imageUrl" class="fgp-img" draggable="false" @load="onLoad" />
 
@@ -103,18 +103,28 @@ const emit = defineEmits<{
 const p = (v: number) => `${v * 100}%`
 
 // ── Image ────────────────────────────────────────────────────
-const imgRef       = ref<HTMLImageElement | null>(null)
-const containerRef = ref<HTMLDivElement | null>(null)
-const imageUrl     = ref('')
+const imgRef        = ref<HTMLImageElement | null>(null)
+const containerRef  = ref<HTMLDivElement | null>(null)
+const imageUrl      = ref('')
+const imgNaturalW   = ref(0)
+const imgNaturalH   = ref(0)
 
 function makeUrl(f: File) {
   if (imageUrl.value) URL.revokeObjectURL(imageUrl.value)
   imageUrl.value = URL.createObjectURL(f)
+  imgNaturalW.value = 0
+  imgNaturalH.value = 0
 }
 onMounted(() => makeUrl(props.imageFile))
 onBeforeUnmount(() => { if (imageUrl.value) URL.revokeObjectURL(imageUrl.value) })
 watch(() => props.imageFile, makeUrl)
-function onLoad() {}
+function onLoad() {
+  const img = imgRef.value
+  if (img) {
+    imgNaturalW.value = img.naturalWidth
+    imgNaturalH.value = img.naturalHeight
+  }
+}
 
 // ── Frame (outer crop boundary) ───────────────────────────────
 interface Frame { left: number; top: number; right: number; bottom: number }
@@ -258,6 +268,12 @@ const cursorStyle = computed(() => {
   return h ? { cursor: h.cursor } : {}
 })
 
+const containerStyle = computed(() => {
+  const base = cursorStyle.value as Record<string, string>
+  if (!imgNaturalW.value || !imgNaturalH.value) return base
+  return { ...base, aspectRatio: `${imgNaturalW.value} / ${imgNaturalH.value}` }
+})
+
 function isDragging(type: DragType, index: number) {
   return dragState.value?.type === type && dragState.value.index === index
 }
@@ -346,19 +362,20 @@ onBeforeUnmount(() => {
 .fgp-container {
   position: relative;
   width: 100%;
+  max-height: 560px;
   background: #111;
   border-radius: 8px;
   overflow: hidden;
   border: 2px solid #dcdfe6;
 }
 
-/* Image: full width, natural aspect ratio */
+/* Image: fills the container width; container aspect-ratio set dynamically after load */
 .fgp-img {
   display: block;
   width: 100%;
   height: auto;
   max-height: 560px;
-  object-fit: cover;
+  object-fit: contain;
 }
 
 /* ── Mask overlays ── */

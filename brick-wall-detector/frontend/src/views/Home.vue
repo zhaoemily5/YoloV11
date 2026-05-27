@@ -256,7 +256,10 @@
             <el-icon :size="32" color="#0070C0"><Loading /></el-icon>
           </div>
           <el-progress :percentage="Math.min(Math.round(progress), 100)" :stroke-width="8" striped striped-flow color="#0070C0" />
-          <p class="progress-text">AI 模型正在分析图片，识别病害区域...</p>
+          <p v-if="detectQueueMsg" class="queue-msg">
+          <el-icon><Timer /></el-icon> {{ detectQueueMsg }}
+        </p>
+        <p v-else class="progress-text">AI 模型正在分析图片，识别病害区域...</p>
         </div>
       </div>
 
@@ -577,6 +580,9 @@
                 <el-tag v-if="facadeJobId" type="success">已上传 · 任务 {{ facadeJobId.slice(0, 8) }}</el-tag>
                 <el-tag v-else-if="facadeFile" type="warning">图片已选，点击 AI 诊断开始分析</el-tag>
               </div>
+              <div v-if="facadeAnalyzing && facadeQueueMsg" class="facade-queue-msg">
+                <el-icon><Timer /></el-icon> {{ facadeQueueMsg }}
+              </div>
             </el-card>
           </section>
 
@@ -710,7 +716,7 @@
 import { ref, reactive, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { detectDisease, generateReport as apiGenerateReport, uploadFacadePanorama, analyzeFacade, getFacadeReport, getModels, getModelDefaults } from '../api'
-import type { DetectionResult, FacadeResult, ModelParams, AvailableModel } from '../api'
+import type { DetectionResult, FacadeResult, ModelParams, AvailableModel, QueueProgress } from '../api'
 import RepairReport from '../components/RepairReport.vue'
 import ShootingGuide from '../components/ShootingGuide.vue'
 import DashboardView from '../components/DashboardView.vue'
@@ -767,6 +773,7 @@ const detectionContainerRef = ref<HTMLDivElement>()
 const selectedFile = ref<File | null>(null)
 const previewUrl = ref('')
 const detecting = ref(false)
+const detectQueueMsg = ref('')
 const progress = ref(0)
 const detectionResult = ref<DetectionResult | null>(null)
 const imageScale = ref(1)
@@ -806,6 +813,7 @@ const activeMode = ref('single')
 const facadeFile = ref<File | null>(null)
 const facadeUploading = ref(false)
 const facadeAnalyzing = ref(false)
+const facadeQueueMsg = ref('')
 const facadeJobId = ref('')
 const facadeResult    = ref<FacadeResult | null>(null)
 const facadeVDividers = ref<number[]>([])
@@ -853,6 +861,8 @@ function handleFacadeFileChange(file: any) {
   facadeFile.value = file.raw
   // 切换文件后重置上下文
   facadeJobId.value = ''
+  facadeImageW.value = 0
+  facadeImageH.value = 0
   facadeResult.value = null
   facadeReport.value = null
   selectedGrid.value = null
@@ -891,6 +901,8 @@ async function uploadFacade() {
     })
     if (!result.success) throw new Error(result.message || '上传失败')
     facadeJobId.value = result.jobId
+    facadeImageW.value = (result as any).imageWidth  || 0
+    facadeImageH.value = (result as any).imageHeight || 0
     ElMessage.success('全景大图上传成功，请点击 AI 诊断')
   } catch (error: any) {
     ElMessage.error(error.message || '全景图上传失败')
@@ -910,6 +922,8 @@ async function runFacadeAnalyze() {
   }
   try {
     facadeAnalyzing.value = true
+    facadeResult.value = null
+    facadeQueueMsg.value = ''
     if (!facadeJobId.value) {
       const uploadResult = await uploadFacadePanorama({
         panorama: facadeFile.value,
@@ -940,16 +954,35 @@ async function runFacadeAnalyze() {
       cropHeight: Math.round((f!.bottom - f!.top) * H),
     } : {}
 
-    const result = await analyzeFacade(facadeJobId.value, {
-      tileSize: 640,
-      overlapRatio: 0.10,
-      gridMode: facadeForm.gridMode,
-      modelConf:    modelParams.value.modelConf,
-      iouThreshold: modelParams.value.iouThreshold,
-      customVDividers: facadeVDividers.value.length ? facadeVDividers.value : undefined,
-      customHDividers: facadeHDividers.value.length ? facadeHDividers.value : undefined,
-      ...cropParams,
-    })
+    facadeQueueMsg.value = ''
+    const result = await analyzeFacade(
+      facadeJobId.value,
+      {
+        tileSize: 640,
+        overlapRatio: 0.10,
+        gridMode: facadeForm.gridMode,
+        modelConf:    modelParams.value.modelConf,
+        iouThreshold: modelParams.value.iouThreshold,
+        customVDividers: facadeVDividers.value.length ? facadeVDividers.value : undefined,
+        customHDividers: facadeHDividers.value.length ? facadeHDividers.value : undefined,
+        ...cropParams,
+      },
+      (info: QueueProgress) => {
+        if (info.status === 'queued') {
+          facadeQueueMsg.value = `排队中，您前面还有 ${info.position ?? 0} 位`
+        } else if ((info.tilesTotal ?? 0) > 0) {
+          facadeQueueMsg.value = `已对 ${info.tilesProcessed}/${info.tilesTotal} 块切片分析完成`
+        } else if (info.status === 'tiling') {
+          facadeQueueMsg.value = '正在切片...'
+        } else if (info.status === 'stitching') {
+          facadeQueueMsg.value = '正在拼合图片...'
+        } else if (info.progress) {
+          facadeQueueMsg.value = `AI 推理中 ${info.progress}%`
+        } else {
+          facadeQueueMsg.value = info.message || ''
+        }
+      }
+    )
     if (!result.success) throw new Error((result as any).message || 'AI 诊断失败')
     facadeResult.value = result
     selectedGrid.value = null
@@ -1263,6 +1296,7 @@ async function startDetection() {
   await nextTick()
 
   detecting.value = true
+  detectQueueMsg.value = ''
   progress.value = 0
   reportData.value = null
 
@@ -1273,7 +1307,16 @@ async function startDetection() {
   }, PROGRESS_TICK_MS)
 
   try {
-    const result = await detectDisease(selectedFile.value, brickLengthMm.value, modelParams.value)
+    const result = await detectDisease(
+      selectedFile.value, brickLengthMm.value, modelParams.value,
+      (info: QueueProgress) => {
+        if (info.status === 'queued') {
+          detectQueueMsg.value = `排队中，您前面还有 ${info.position ?? 0} 位`
+        } else if (info.status === 'processing') {
+          detectQueueMsg.value = ''
+        }
+      }
+    )
 
     clearInterval(progressInterval)
     progress.value = 100
@@ -1741,6 +1784,8 @@ async function generateReport() {
 }
 @keyframes pulse-ring { 0% { transform:scale(.8); opacity:.6; } 100% { transform:scale(1.6); opacity:0; } }
 .progress-text { margin-top:10px; color:#555; font-size:14px; }
+.queue-msg { margin-top:8px; color:#e6a23c; font-size:14px; font-weight:500; display:flex; align-items:center; gap:4px; justify-content:center; }
+.facade-queue-msg { margin-top:8px; color:#e6a23c; font-size:14px; font-weight:500; display:flex; align-items:center; gap:4px; }
 
 /* ===================== DETECTION RESULTS ===================== */
 .detection-image-wrap {
