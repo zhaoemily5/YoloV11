@@ -493,9 +493,7 @@
               <div class="slice-mode-bar" style="margin-bottom: 16px; padding-bottom: 16px; border-bottom: 1px solid #ebeef5;">
                 <span style="font-size: 14px; font-weight: bold; margin-right: 12px; color: #303133;">请先选择分析模式：</span>
                 <el-radio-group v-model="facadeSliceMode" size="small" @change="handleFacadeModeChange">
-                  <el-radio-button value="manual">
-                    <el-icon style="margin-right:4px"><Grid /></el-icon>手动 N×N 切片
-                  </el-radio-button>
+
                   <el-radio-button value="auto">
                     <el-icon style="margin-right:4px"><MagicStick /></el-icon>智能比例尺切片
                   </el-radio-button>
@@ -508,8 +506,7 @@
                 :auto-upload="false"
                 :limit="1"
                 :show-file-list="false"
-                :disabled="!facadeSliceMode"
-                accept=".jpg,.jpeg,.png,.tif,.tiff,.webp"
+                                accept=".jpg,.jpeg,.png,.tif,.tiff,.webp"
                 :on-change="handleFacadeFileChange"
                 :on-exceed="handleFacadeExceed"
               >
@@ -538,29 +535,14 @@
                 </template>
                 <template #tip>
                   <div class="el-upload__tip">
-                    <template v-if="facadeSliceMode">
-                      支持 Reality Capture 生成的高清正射影像，建议上传 JPG / TIFF（最大 200MB）。
-                    </template>
-                    <template v-else>
-                      请选择模式后再上传图片。智能比例尺切片会在上传后立即执行砖缝识别、比例尺建立和浅色轮廓预览。
-                    </template>
+                    支持 Reality Capture 生成的高清正射影像，建议上传 JPG / TIFF（最大 200MB）。上传后会自动执行砖缝识别、比例尺建立和浅色轮廓预览。
                   </div>
                 </template>
               </el-upload>
 
-              <!-- 手动模式：N×N 网格预览 -->
-              <FacadeGridPreview
-                v-if="facadeFile && facadeSliceMode === 'manual'"
-                :image-file="facadeFile"
-                :grid-mode="facadeForm.gridMode"
-                @update:v-dividers="facadeVDividers = $event"
-                @update:h-dividers="facadeHDividers = $event"
-                @update:frame="facadeFrame = $event"
-              />
-
               <!-- 智能模式：比例尺切片预览 -->
               <FacadeAutoPreview
-                v-if="facadeFile && facadeSliceMode === 'auto'"
+                v-if="facadeFile"
                 :image-file="facadeFile"
                 :preview-image-url="!facadeUseManualScale ? (facadeCalibResult?.annotatedImageUrl || '') : ''"
                 :wall-width-m="calculatedWallWidth > 0 ? calculatedWallWidth : facadeForm.wallWidthM"
@@ -585,7 +567,7 @@
                   <el-input v-model="facadeForm.wallName" />
                 </el-form-item>
                 <!-- 自动根据标定比例尺计算 -->
-                <el-form-item v-if="facadeSliceMode === 'auto'" label="墙面实际尺寸">
+                <el-form-item label="墙面实际尺寸">
                   <div class="auto-size-display">
                     <span class="size-item">
                       <label>宽度:</label>
@@ -595,38 +577,13 @@
                       <label>高度:</label>
                       <span class="size-value">{{ calculatedWallHeight > 0 ? calculatedWallHeight.toFixed(2) : '—' }} m</span>
                     </span>
-                    <span class="size-item">
-                      <label>网格:</label>
-                      <span class="size-value">{{ facadeForm.gridSizeM }} m</span>
-                    </span>
+
                   </div>
                   <div v-if="!manualScaleResult?.success && !facadeCalibResult?.success" class="size-hint">
                     <el-icon><InfoFilled /></el-icon> 请先进行手动框选标定以计算实际尺寸
                   </div>
                 </el-form-item>
-                <el-form-item v-if="facadeSliceMode === 'manual'" label="墙面宽度(m)">
-                  <el-input-number v-model="facadeForm.wallWidthM" :min="1" :precision="2" />
-                </el-form-item>
-                <el-form-item v-if="facadeSliceMode === 'manual'" label="墙面高度(m)">
-                  <el-input-number v-model="facadeForm.wallHeightM" :min="1" :precision="2" />
-                </el-form-item>
-                <el-form-item v-if="facadeSliceMode === 'manual'" label="网格尺寸(m)">
-                  <el-input-number v-model="facadeForm.gridSizeM" :min="1" :precision="1" />
-                </el-form-item>
-                <!-- 手动模式：N×N 选择 -->
-                <el-form-item v-if="facadeSliceMode === 'manual'" label="切片模式">
-                  <el-radio-group v-model="facadeForm.gridMode" size="small">
-                    <el-radio-button :value="2">2×2</el-radio-button>
-                    <el-radio-button :value="3">3×3</el-radio-button>
-                    <el-radio-button :value="4">4×4</el-radio-button>
-                  </el-radio-group>
-                  <span style="margin-left:8px;font-size:12px;color:#888">
-                    均匀切割为 {{ facadeForm.gridMode }}×{{ facadeForm.gridMode }} 块（含 10% 边缘重叠）
-                  </span>
-                </el-form-item>
-
                 <!-- 智能模式：相关参数按钮 -->
-                <template v-if="facadeSliceMode === 'auto'">
                   <div style="margin: 10px 0;">
                     <el-button size="small" @click="paramsDialogVisible = true">
                       <el-icon><Setting /></el-icon>&nbsp;相关参数
@@ -683,7 +640,6 @@
                   <div v-if="facadeCalibResult?.annotatedImageUrl" class="calib-thumb">
                     <img :src="facadeCalibResult.annotatedImageUrl" alt="砖缝标定" />
                   </div>
-                </template>
               </el-form>
 
               <div class="facade-actions">
@@ -1007,8 +963,6 @@ const facadeProgress = ref(0)
 const facadeProgressText = ref('AI 深度普查诊断中，请稍候...')
 const facadeJobId = ref('')
 const facadeResult    = ref<FacadeResult | null>(null)
-const facadeVDividers = ref<number[]>([])
-const facadeHDividers = ref<number[]>([])
 const facadeFrame     = ref<{ left: number; top: number; right: number; bottom: number } | null>(null)
 const facadeImageW    = ref(0)
 const facadeImageH    = ref(0)
@@ -1016,7 +970,6 @@ const selectedGrid = ref<any | null>(null)
 const gridSliceDialogVisible = ref(false)
 
 // ── 切片模式 ──────────────────────────────────────────────────
-const facadeSliceMode = ref<'manual' | 'auto' | ''>('')
 // 不再自动运行标定，用户需手动选择标定方式
 
 // 砖块及切片参数（持久化）
@@ -1136,7 +1089,7 @@ const facadeForm = reactive({
   wallName: '静安别墅矮墙立面',
   wallWidthM: 12,
   wallHeightM: 3,
-  gridSizeM: 1,
+  
   gridMode: 3
 })
 
@@ -1182,11 +1135,11 @@ function handleFacadeModeChange(value: 'manual' | 'auto') {
   if (facadeFile.value || facadeJobId.value || facadeResult.value || facadeCalibResult.value) {
     resetFacadeContext({ keepMode: true })
   }
-  facadeSliceMode.value = value
+  // facadeSliceMode removed
 }
 
 function handleFacadeFileChange(file: any) {
-  if (!facadeSliceMode.value) {
+  if (false) {
     ElMessage.warning('请先选择切片模式，再上传图片')
     facadeUploadRef.value?.clearFiles()
     return
@@ -1221,7 +1174,7 @@ function handleFacadeFileChange(file: any) {
     void uploadFacade()
   }
   // 智能模式：直接上传（使用默认宽高，之后通过标定修正）
-  if (facadeSliceMode.value === 'auto') {
+  if (true) {
     void uploadFacade()
   }
 }
@@ -1279,7 +1232,7 @@ async function uploadFacade() {
     facadeProgress.value = 10
 
     // 智能模式：上传成功后自动打开手动标定对话框
-    if (facadeSliceMode.value === 'auto') {
+    if (true) {
       setTimeout(() => {
         openManualScaleDialog()
       }, 300)
@@ -1366,7 +1319,7 @@ async function runFacadeAnalyze() {
     ElMessage.warning('请填写墙体实际宽度和高度')
     return
   }
-  if (facadeSliceMode.value === 'auto') {
+  if (true) {
     if (!facadeBrickParams.C || facadeBrickParams.C <= 0) {
       ElMessage.warning('请设置区域边长 C')
       return
@@ -1408,7 +1361,7 @@ async function runFacadeAnalyze() {
       ...cropParams,
     }
 
-    if (facadeSliceMode.value === 'auto') {
+    if (true) {
       analyzeOptions.sliceMode     = 'auto'
       analyzeOptions.scalePxPerMm  = facadeActiveScale.value
       analyzeOptions.zoneSizeMm    = facadeBrickParams.C
