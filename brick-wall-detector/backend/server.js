@@ -2153,28 +2153,46 @@ function pxToCm(px, scalePxPerMm) {
   return px / scalePxPerMm / 10;
 }
 
-function pixelBboxToRealCm(x1, y1, x2, y2, scalePxPerMm, imageHeight) {
+function pixelPointToWallCm(px, py, scalePxPerMm, imageHeight) {
   return {
-    x1Cm: pxToCm(x1, scalePxPerMm),
-    y1Cm: pxToCm(imageHeight - y2, scalePxPerMm),
-    x2Cm: pxToCm(x2, scalePxPerMm),
-    y2Cm: pxToCm(imageHeight - y1, scalePxPerMm),
-    centerXCm: pxToCm((x1 + x2) / 2, scalePxPerMm),
-    centerYCm: pxToCm(imageHeight - (y1 + y2) / 2, scalePxPerMm),
-    widthCm: Math.abs(pxToCm(x2 - x1, scalePxPerMm)),
-    heightCm: Math.abs(pxToCm(y2 - y1, scalePxPerMm)),
+    xCm: pxToCm(px, scalePxPerMm),
+    yCm: pxToCm(imageHeight - py, scalePxPerMm),
   };
+}
+
+function pixelBboxToRealCm(x1, y1, x2, y2, scalePxPerMm, imageHeight) {
+  const bottomLeft = pixelPointToWallCm(x1, y2, scalePxPerMm, imageHeight);
+  const topRight = pixelPointToWallCm(x2, y1, scalePxPerMm, imageHeight);
+  const center = pixelPointToWallCm((x1 + x2) / 2, (y1 + y2) / 2, scalePxPerMm, imageHeight);
+  return {
+    bottomLeft,
+    topRight,
+    center,
+    widthCm: Math.abs(topRight.xCm - bottomLeft.xCm),
+    heightCm: Math.abs(topRight.yCm - bottomLeft.yCm),
+  };
+}
+
+function formatWallPoint(p) {
+  const f = (n) => Number(n).toFixed(1);
+  return `X=${f(p.xCm)}, Y=${f(p.yCm)}`;
 }
 
 function formatRealBboxLine(real) {
   const f = (n) => Number(n).toFixed(1);
   return (
-    `实际坐标(cm): 左下(${f(real.x1Cm)}, ${f(real.y1Cm)}) ` +
-    `右上(${f(real.x2Cm)}, ${f(real.y2Cm)}) ` +
-    `中心(${f(real.centerXCm)}, ${f(real.centerYCm)}) ` +
-    `尺寸 ${f(real.widthCm)}×${f(real.heightCm)} cm`
+    `墙面坐标(cm): 左下角(${formatWallPoint(real.bottomLeft)}) ` +
+    `右上角(${formatWallPoint(real.topRight)}) ` +
+    `中心(${formatWallPoint(real.center)}) ` +
+    `宽×高 ${f(real.widthCm)}×${f(real.heightCm)} cm`
   );
 }
+
+const WALL_COORD_HEADER = [
+  '墙面坐标系：原点在图片左下角 (0,0)，X 轴向右，Y 轴向上，单位 cm',
+  '换算: X(cm)=像素x÷比例尺÷10；Y(cm)=(图像高度−像素y)÷比例尺÷10',
+  '图像像素坐标：原点在图片左上角，仅作对照参考',
+];
 
 // --- 导出立面普查坐标文件 ---
 app.get('/api/facade/export-coords/:jobId', (req, res) => {
@@ -2205,11 +2223,13 @@ app.get('/api/facade/export-coords/:jobId', (req, res) => {
       coordLines.push(
         `比例尺: ${Number(scalePxPerMm).toFixed(4)} px/mm`,
         `图像尺寸: ${job.imageWidth || 0} × ${imageHeight} px`,
-        '坐标说明: 实际坐标单位为 cm；墙面坐标系原点在图像左下角，x 向右、y 向上',
-        '换算公式: 实际(cm) = 像素 / 比例尺(px/mm) / 10'
+        ...WALL_COORD_HEADER
       );
     } else {
-      coordLines.push('比例尺: 未标定（仅输出像素坐标，无法换算实际坐标）');
+      coordLines.push(
+        '比例尺: 未标定（无法换算墙面坐标 cm）',
+        ...WALL_COORD_HEADER
+      );
     }
 
     coordLines.push(
@@ -2248,10 +2268,14 @@ app.get('/api/facade/export-coords/:jobId', (req, res) => {
         const conf = det.confidence || 0;
         const severity = det.severity || '轻度';
         const tileId = det.tileId || '';
-        let coordPart = ` | 像素: 左上(${Math.round(x1)}, ${Math.round(y1)}) 右下(${Math.round(x2)}, ${Math.round(y2)})`;
+        let coordPart = '';
         if (hasScale) {
           const real = pixelBboxToRealCm(x1, y1, x2, y2, scalePxPerMm, imageHeight);
-          coordPart = ` | ${formatRealBboxLine(real)} | 像素: 左上(${Math.round(x1)}, ${Math.round(y1)}) 右下(${Math.round(x2)}, ${Math.round(y2)})`;
+          coordPart =
+            ` | ${formatRealBboxLine(real)}` +
+            ` | 像素对照: (${Math.round(x1)},${Math.round(y1)})→(${Math.round(x2)},${Math.round(y2)}) [图像原点左上]`;
+        } else {
+          coordPart = ` | 像素: (${Math.round(x1)},${Math.round(y1)})→(${Math.round(x2)},${Math.round(y2)}) [图像原点左上]`;
         }
         coordLines.push(
           `  ${String(globalId).padStart(3, '0')} | ${disease} | 置信度: ${(conf * 100).toFixed(1)}% | 严重程度: ${severity}` +

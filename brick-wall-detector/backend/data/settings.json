@@ -1,6 +1,6 @@
 {
   "systemName": "红砖墙病害智能检测系统",
-  "systemVersion": "v1.1.1",
+  "systemVersion": "v1.1.2",
   "modelVersion": "YOLOv11-BrickWall-v1.0",
   "confidenceThreshold": 0.3,
   "iouThreshold": 0.2,

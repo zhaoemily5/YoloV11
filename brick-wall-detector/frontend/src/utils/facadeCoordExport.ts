@@ -1,8 +1,11 @@
 import {
   type CoordTransformContext,
+  formatCoordSystemHeaderLines,
   formatRealBboxLine,
   hasValidCoordTransform,
   pixelBboxToRealCm,
+  PIXEL_COORD_SYSTEM_DESC,
+  WALL_COORD_SYSTEM_DESC,
 } from './facadeCoordTransform'
 
 export interface FacadeCoordMeta {
@@ -61,11 +64,10 @@ export function buildFacadeCoordText(
     lines.push(
       `比例尺: ${meta.scalePxPerMm!.toFixed(4)} px/mm`,
       `图像尺寸: ${meta.imageWidth} × ${meta.imageHeight} px`,
-      '坐标说明: 实际坐标单位为 cm；墙面坐标系原点在图像左下角，x 向右、y 向上',
-      '换算公式: 实际(cm) = 像素 / 比例尺(px/mm) / 10'
+      ...formatCoordSystemHeaderLines()
     )
   } else {
-    lines.push('比例尺: 未标定（仅输出像素坐标，无法换算实际坐标）')
+    lines.push('比例尺: 未标定（无法换算墙面坐标 cm）', WALL_COORD_SYSTEM_DESC, PIXEL_COORD_SYSTEM_DESC)
   }
 
   lines.push(
@@ -89,10 +91,14 @@ export function buildFacadeCoordText(
     lines.push(`【${disease}】共 ${items.length} 处`)
     items.forEach(det => {
       const { x1, y1, x2, y2 } = bboxCorners(det.globalBbox || det.bbox)
-      let coordPart = ` | 像素: 左上(${Math.round(x1)}, ${Math.round(y1)}) 右下(${Math.round(x2)}, ${Math.round(y2)})`
+      let coordPart = ''
       if (transform) {
         const real = pixelBboxToRealCm(x1, y1, x2, y2, transform)
-        coordPart = ` | ${formatRealBboxLine(real)} | 像素: 左上(${Math.round(x1)}, ${Math.round(y1)}) 右下(${Math.round(x2)}, ${Math.round(y2)})`
+        coordPart =
+          ` | ${formatRealBboxLine(real)}` +
+          ` | 像素对照: (${Math.round(x1)},${Math.round(y1)})→(${Math.round(x2)},${Math.round(y2)}) [图像原点左上]`
+      } else {
+        coordPart = ` | 像素: (${Math.round(x1)},${Math.round(y1)})→(${Math.round(x2)},${Math.round(y2)}) [图像原点左上]`
       }
       lines.push(
         `  ${String(globalId).padStart(3, '0')} | ${disease} | 置信度: ${((det.confidence || 0) * 100).toFixed(1)}% | 严重程度: ${det.severity || '轻度'}` +
@@ -176,12 +182,18 @@ export function detectionTableRows(detections: any[], meta: FacadeCoordMeta = {}
     }
     if (transform) {
       const real = pixelBboxToRealCm(x1, y1, x2, y2, transform)
-      row.centerXCm = Number(real.centerXCm.toFixed(1))
-      row.centerYCm = Number(real.centerYCm.toFixed(1))
-      row.x1Cm = Number(real.x1Cm.toFixed(1))
-      row.y1Cm = Number(real.y1Cm.toFixed(1))
-      row.x2Cm = Number(real.x2Cm.toFixed(1))
-      row.y2Cm = Number(real.y2Cm.toFixed(1))
+      row.xCm = Number(real.center.xCm.toFixed(1))
+      row.yCm = Number(real.center.yCm.toFixed(1))
+      row.xMinCm = Number(real.bottomLeft.xCm.toFixed(1))
+      row.yMinCm = Number(real.bottomLeft.yCm.toFixed(1))
+      row.xMaxCm = Number(real.topRight.xCm.toFixed(1))
+      row.yMaxCm = Number(real.topRight.yCm.toFixed(1))
+      row.centerXCm = row.xCm
+      row.centerYCm = row.yCm
+      row.x1Cm = row.xMinCm
+      row.y1Cm = row.yMinCm
+      row.x2Cm = row.xMaxCm
+      row.y2Cm = row.yMaxCm
     }
     return row
   })

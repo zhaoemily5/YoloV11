@@ -1,4 +1,9 @@
-import { formatRealBboxLine, hasValidCoordTransform, pixelBboxToRealCm } from './facadeCoordTransform'
+import {
+  formatRealBboxLine,
+  formatWallPoint,
+  hasValidCoordTransform,
+  pixelBboxToRealCm,
+} from './facadeCoordTransform'
 
 export interface ProblemReportMeta {
   projectName?: string
@@ -139,7 +144,7 @@ export function buildProblemReportHtml(input: ProblemReportInput): string {
         scalePxPerMm: meta!.scalePxPerMm!,
         imageHeight: meta!.imageHeight!,
       })
-      coordHtml = `实际(cm): 中心(${real.centerXCm.toFixed(1)}, ${real.centerYCm.toFixed(1)}) · ${coordHtml}`
+      coordHtml = `墙面(cm)[左下原点,X→,Y↑]: 中心(${formatWallPoint(real.center)}) · ${coordHtml}`
     }
     return `<div style="margin-bottom:10px;padding:10px;border:1px solid #e4e7ed;border-radius:6px;">
       <b>${i + 1}. ${d.class || '未知'}</b> — ${d.severity || '—'} — 置信度 ${((d.confidence || 0) * 100).toFixed(1)}%<br/>
