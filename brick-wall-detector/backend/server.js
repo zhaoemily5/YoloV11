@@ -2501,9 +2501,14 @@ app.get('/api/facade/report/:jobId', (req, res) => {
       const count = summary.diseaseStats[name] || 0;
       const recommendation = REPAIR_RECOMMENDATIONS[name] || {};
       const unitCost = REPAIR_UNIT_COSTS[name] || { unit: 'm²', lightCost: 0, mediumCost: 0, severeCost: 0 };
-      const totalArea = detections
-        .filter(d => d.class === name)
-        .reduce((sum, d) => sum + (d.areaM2 || 0), 0);
+      const classDets = detections.filter(d => d.class === name);
+      const totalArea = classDets.reduce((sum, d) => sum + (d.areaM2 || 0), 0);
+      const severityOrder = { '轻度': 1, '中度': 2, '重度': 3 };
+      let maxSeverity = '—';
+      classDets.forEach(d => {
+        const s = d.severity || '轻度';
+        if (maxSeverity === '—' || (severityOrder[s] || 0) > (severityOrder[maxSeverity] || 0)) maxSeverity = s;
+      });
       let estimatedCost = 0;
       if (unitCost.unit === 'm²') {
         estimatedCost = Math.round(totalArea * (unitCost.mediumCost || 0));
@@ -2516,6 +2521,7 @@ app.get('/api/facade/report/:jobId', (req, res) => {
         detected: count > 0,
         count,
         totalArea: Number(totalArea.toFixed(3)),
+        maxSeverity: count > 0 ? maxSeverity : '—',
         unit: unitCost.unit,
         estimatedCost,
         ...recommendation
@@ -2523,6 +2529,14 @@ app.get('/api/facade/report/:jobId', (req, res) => {
     });
 
     const totalEstimatedCost = diseaseDetails.reduce((s, d) => s + d.estimatedCost, 0);
+    const totalDiseaseTypes = diseaseDetails.filter(d => d.detected).length;
+
+    const repairPlan = {
+      urgentItems: diseaseDetails.filter(d => d.detected && d.maxSeverity === '重度').map(d => ({ name: d.name, count: d.count })),
+      importantItems: diseaseDetails.filter(d => d.detected && d.maxSeverity === '中度').map(d => ({ name: d.name, count: d.count })),
+      routineItems: diseaseDetails.filter(d => d.detected && (d.maxSeverity === '轻度' || d.maxSeverity === '—')).map(d => ({ name: d.name, count: d.count })),
+      priorityGrids: sortedGrids.slice(0, 5).map(g => ({ gridId: g.gridId, totalCount: g.totalCount, intensity: g.intensity }))
+    };
 
     res.json({
       success: true,
@@ -2537,7 +2551,10 @@ app.get('/api/facade/report/:jobId', (req, res) => {
         wallHeightM: job.wallHeightM,
         wallAreaM2: Number(wallAreaM2.toFixed(2)),
         gridSizeM: job.gridSizeM,
+        scalePxPerMm: job.scalePxPerMm || null,
+        professionalNote: '基于整墙正射影像切片识别与网格化统计，报告供修缮范围划定与分区施工参考',
         overallAssessment: {
+          totalDiseaseTypes,
           totalDetections: summary.totalDetections,
           totalDamageAreaM2: summary.totalAreaM2,
           crackLengthM: summary.crackLengthM,
@@ -2553,7 +2570,8 @@ app.get('/api/facade/report/:jobId', (req, res) => {
         },
         keyRepairGrids: summary.keyRepairGrids,
         topGrids: sortedGrids,
-        diseaseDetails
+        diseaseDetails,
+        repairPlan
       }
     });
   } catch (error) {

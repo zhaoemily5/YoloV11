@@ -807,7 +807,9 @@
                 :grids="facadeResult.grids"
                 :detections="facadeResult.detections || []"
                 :selected-grid="selectedGrid"
+                :report-loading="facadeReportLoading"
                 @open-grid="openGridSliceDialog"
+                @generate-report="generateFacadeReport(true)"
               />
             </aside>
             </div>
@@ -839,6 +841,11 @@
                 :meta="facadeProblemReportMeta"
               />
             </div>
+
+            <!-- 整墙修缮报告（与单图检测 RepairReport 同级） -->
+            <transition name="slide-up">
+              <FacadeRepairReport v-if="facadeReport" :report="facadeReport" />
+            </transition>
           </section>
 
           <GridSliceDialog
@@ -942,9 +949,10 @@
 import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { CircleClose, MagicStick, Crop, Search, ArrowUp, Setting } from '@element-plus/icons-vue'
-import { detectDisease, generateReport as apiGenerateReport, uploadFacadePanorama, analyzeFacade, calibrateBrickScale, manualScaleCalibration, exportFacadeCoords, getModels, getModelDefaults, api } from '../api'
+import { detectDisease, generateReport as apiGenerateReport, uploadFacadePanorama, analyzeFacade, calibrateBrickScale, manualScaleCalibration, exportFacadeCoords, getFacadeReport, getModels, getModelDefaults, api } from '../api'
 import type { DetectionResult, FacadeResult, ModelParams, AvailableModel, QueueProgress } from '../api'
 import RepairReport from '../components/RepairReport.vue'
+import FacadeRepairReport from '../components/FacadeRepairReport.vue'
 import ShootingGuide from '../components/ShootingGuide.vue'
 import DashboardView from '../components/DashboardView.vue'
 import FacadeHeatmapCanvas from '../components/FacadeHeatmapCanvas.vue'
@@ -1293,6 +1301,7 @@ function resetFacadeContext() {
   facadePreviewNativeW.value = 0
   facadePreviewNativeH.value = 0
   facadeResult.value = null
+  facadeReport.value = null
   selectedGrid.value = null
   facadeCalibResult.value = null
   facadeUseCalibScale.value = false
@@ -1320,6 +1329,7 @@ function handleFacadeFileChange(file: any) {
   facadePreviewNativeW.value = 0
   facadePreviewNativeH.value = 0
   facadeResult.value = null
+  facadeReport.value = null
   selectedGrid.value = null
   facadeCalibResult.value = null
   facadeUseCalibScale.value = false
@@ -1640,6 +1650,7 @@ async function runFacadeAnalyze() {
       ElMessage.success(`立面普查分析完成，检出 ${r.totalDetections} 处病害`)
     }
     void prefetchFacadeCoords()
+    void generateFacadeReport(false)
   } catch (error: any) {
     ElMessage.error(error.message || '立面普查分析失败')
   } finally {
@@ -1651,6 +1662,37 @@ async function runFacadeAnalyze() {
 function openGridSliceDialog(grid: any) {
   selectedGrid.value = grid
   gridSliceDialogVisible.value = true
+}
+
+const facadeReportLoading = ref(false)
+const facadeReport = ref<any | null>(null)
+
+async function generateFacadeReport(scroll = true) {
+  if (!facadeResult.value && !facadeJobId.value) {
+    ElMessage.warning('请先完成立面 AI 诊断')
+    return
+  }
+  facadeReportLoading.value = true
+  try {
+    if (facadeJobId.value) {
+      const result: any = await getFacadeReport(facadeJobId.value)
+      if (result.success && result.report) {
+        facadeReport.value = result.report
+        ElMessage.success('整墙修缮报告已生成')
+        if (scroll) {
+          setTimeout(() => {
+            document.getElementById('facade-repair-report')?.scrollIntoView({ behavior: 'smooth' })
+          }, 200)
+        }
+        return
+      }
+    }
+    ElMessage.error('整墙报告生成失败，请确认诊断已完成')
+  } catch (error: any) {
+    ElMessage.error(error.message || '整墙报告生成失败')
+  } finally {
+    facadeReportLoading.value = false
+  }
 }
 
 async function cancelFacadeAnalyze() {

@@ -38,24 +38,39 @@
       </el-button>
     </div>
     <el-empty v-else description="点击左侧热力图格子查看局部详情" />
+
+    <el-button
+      type="primary"
+      class="facade-report-btn"
+      :loading="reportLoading"
+      :disabled="!canGenerateReport"
+      @click="$emit('generate-report')"
+    >
+      <el-icon><Document /></el-icon>
+      生成整墙修缮报告
+    </el-button>
   </el-card>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { Document } from '@element-plus/icons-vue'
 
 const props = defineProps<{
   summary: any
   grids: any[]
   detections?: any[]
   selectedGrid: any | null
+  reportLoading?: boolean
 }>()
 
 defineEmits<{
   (event: 'open-grid', grid: any): void
+  (event: 'generate-report'): void
 }>()
 
 const highRiskGridCount = computed(() => props.grids.filter(g => g.intensity >= 0.65).length)
+const canGenerateReport = computed(() => (props.summary?.totalDetections || 0) > 0 || (props.detections?.length || 0) > 0)
 </script>
 
 <style scoped>
@@ -82,6 +97,7 @@ const highRiskGridCount = computed(() => props.grids.filter(g => g.intensity >= 
 }
 .selected-grid h4 { margin-bottom: 8px; color: #003a66; }
 .selected-grid { line-height: 1.8; flex: 1; }
+.facade-report-btn { width: 100%; margin-top: auto; font-weight: 600; letter-spacing: 0.5px; }
 @media (max-width: 768px) {
   .metric-list { grid-template-columns: repeat(2, 1fr); gap: 8px; }
   .metric-card { padding: 12px 10px; }
