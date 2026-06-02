@@ -1,0 +1,60 @@
+export interface TileMetrics {
+  corePx: number
+  corePxExact: number
+  extractPx: number
+  extractPxExact: number
+  stepPxExact: number
+}
+
+/** 与后端 createAutoScaleTiles 保持一致：核心 C×scale，裁切 (C+2D)×scale，步长 C×scale */
+export function computeTileMetrics(
+  scalePxPerMm: number,
+  zoneSizeMm: number,
+  overlapMm: number
+): TileMetrics {
+  const C = zoneSizeMm || 0
+  const D = overlapMm || 0
+  if (!scalePxPerMm || scalePxPerMm <= 0 || !C) {
+    return {
+      corePx: 0,
+      corePxExact: 0,
+      extractPx: 0,
+      extractPxExact: 0,
+      stepPxExact: 0,
+    }
+  }
+
+  const stepPxExact = C * scalePxPerMm
+  const extractPxExact = (C + 2 * D) * scalePxPerMm
+  const corePxExact = C * scalePxPerMm
+
+  return {
+    corePx: Math.round(corePxExact),
+    corePxExact,
+    extractPx: Math.round(extractPxExact),
+    extractPxExact,
+    stepPxExact,
+  }
+}
+
+/** 统计 ROI 区域内有效切片数量（与后端 30% 阈值一致） */
+export function countTilesInRegion(
+  roiWidthPx: number,
+  roiHeightPx: number,
+  metrics: TileMetrics
+): number {
+  const { stepPxExact, extractPxExact } = metrics
+  if (!stepPxExact || !extractPxExact || !roiWidthPx || !roiHeightPx) return 0
+
+  let count = 0
+  for (let y = 0; y < roiHeightPx; y += stepPxExact) {
+    for (let x = 0; x < roiWidthPx; x += stepPxExact) {
+      const cropW = Math.min(extractPxExact, roiWidthPx - x)
+      const cropH = Math.min(extractPxExact, roiHeightPx - y)
+      if (cropW >= stepPxExact * 0.3 && cropH >= stepPxExact * 0.3) {
+        count++
+      }
+    }
+  }
+  return count
+}

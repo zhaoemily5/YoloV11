@@ -407,7 +407,6 @@ export async function analyzeFacade(
     zoneSizeMm?: number
     overlapMm?: number
     brickLengthMm?: number
-    brickWidthMm?: number
   } = {},
   onProgress?: (info: QueueProgress) => void
 ): Promise<FacadeResult> {
@@ -431,7 +430,6 @@ export async function analyzeFacade(
   if (options.zoneSizeMm    != null) body.zoneSizeMm    = options.zoneSizeMm
   if (options.overlapMm     != null) body.overlapMm     = options.overlapMm
   if (options.brickLengthMm != null) body.brickLengthMm = options.brickLengthMm
-  if (options.brickWidthMm  != null) body.brickWidthMm  = options.brickWidthMm
 
   const initial: any = await api.post(`/facade/analyze/${jobId}`, body, { timeout: 60000 })
   const pollJobId = initial.jobId || jobId
@@ -467,26 +465,25 @@ export async function getFacadeJob(jobId: string): Promise<any> {
 export async function calibrateBrickScale(
   jobId: string,
   brickLengthMm: number,
-  brickWidthMm: number
+  brickWidthMm?: number
 ): Promise<any> {
-  return api.post(`/facade/calibrate-scale/${jobId}`, { brickLengthMm, brickWidthMm })
+  return api.post(`/facade/calibrate-scale/${jobId}`, {
+    brickLengthMm,
+    ...(brickWidthMm != null ? { brickWidthMm } : {})
+  })
 }
 
 /**
- * 手动框选砖块比例尺标定
+ * 手动画线砖块比例尺标定（仅使用长度维度）
  */
 export async function manualScaleCalibration(
   jobId: string,
-  longBrickPx: number,
-  shortBrickPx: number,
-  brickLengthMm: number,
-  brickWidthMm: number
+  linePixelLength: number,
+  brickLengthMm: number
 ): Promise<any> {
   return api.post(`/facade/manual-scale/${jobId}`, {
-    longBrickPx,
-    shortBrickPx,
-    brickLengthMm,
-    brickWidthMm
+    linePixelLength,
+    brickLengthMm
   })
 }
 
@@ -495,6 +492,20 @@ export async function manualScaleCalibration(
  */
 export async function getFacadeReport(jobId: string): Promise<any> {
   return api.get(`/facade/report/${jobId}`)
+}
+
+/**
+ * 导出立面普查坐标文件
+ */
+export async function exportFacadeCoords(jobId: string): Promise<{
+  success: boolean
+  jobId: string
+  coordTxtContent: string
+  totalDetections: number
+  totalGrids: number
+  generatedAt: string
+}> {
+  return api.get(`/facade/export-coords/${jobId}`)
 }
 
 // ==================== 拍摄质量初筛 API ====================
@@ -540,5 +551,6 @@ export default {
   manualScaleCalibration,
   getFacadeJob,
   getFacadeReport,
+  exportFacadeCoords,
   checkImageQuality
 }

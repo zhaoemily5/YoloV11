@@ -432,13 +432,38 @@ export function initAuth(app, __dirname, opts = {}) {
     res.json({ code: 200, message: '设置已恢复默认', data: null });
   });
 
-  app.get('/api/system/model-options', authMiddleware, (req, res) => {
+  app.get('/api/system/model-options', optionalAuth, (req, res) => {
+    const modelsDir = path.join(__dirname, 'models');
+    const supportedModelExts = new Set(['.pt', '.onnx']);
+    let modelOptions = [];
+
+    if (fs.existsSync(modelsDir)) {
+      const files = fs.readdirSync(modelsDir)
+        .filter(file => supportedModelExts.has(path.extname(file).toLowerCase()))
+        .sort((a, b) => {
+          if (a === 'best.onnx') return -1;
+          if (b === 'best.onnx') return 1;
+          if (a === 'best.pt') return -1;
+          if (b === 'best.pt') return 1;
+          if (a === 'Plus.pt') return -1;
+          if (b === 'Plus.pt') return 1;
+          return a.localeCompare(b);
+        });
+
+      modelOptions = files.map(file => {
+        const ext = path.extname(file).toLowerCase();
+        const name = path.basename(file, ext);
+        return {
+          label: `${name} (${ext.slice(1).toUpperCase()})`,
+          value: file
+        };
+      });
+    }
+
     res.json({
       code: 200,
       message: '查询成功',
-      data: [
-        { label: 'YOLOv11-BrickWall-v1.0 (本地)', value: 'YOLOv11-BrickWall-v1.0' }
-      ]
+      data: modelOptions
     });
   });
 

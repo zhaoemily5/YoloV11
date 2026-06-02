@@ -6,9 +6,9 @@
       <span v-if="estimatedTileCount > 0" class="fap-badge">
         约 <b>{{ estimatedTileCount }}</b> 块切片
       </span>
-      <span v-if="tileSizeNative > 0" class="fap-hint">
-        每块 ≈ {{ tileSizeNative }}×{{ tileSizeNative }} px
-        （真实 {{ Math.round(zoneSizeMm + 2 * overlapMm) }}mm 方形）
+      <span v-if="tileMetrics.corePx > 0" class="fap-hint">
+        核心 {{ tileMetrics.corePx }}×{{ tileMetrics.corePx }} px = {{ Math.round(zoneSizeMm) }}mm 方形
+        <template v-if="overlapMm > 0"> · 裁切 {{ tileMetrics.extractPx }}px（含每侧 {{ Math.round(overlapMm) }}mm 重叠）</template>
       </span>
       <div style="flex:1" />
       <el-button size="small" @click="resetFrame" :icon="FullScreen" plain>全图</el-button>
@@ -33,11 +33,12 @@
         :style="{ top: p(frame.top), bottom: p(1 - frame.bottom), left: p(frame.right) }" />
 
       <!-- Tile grid overlay (within frame, display space) -->
-      <template v-if="dispW > 0 && scaleDisplay > 0 && tileSizeDisplay > 0">
+      <template v-if="dispW > 0 && scaleDisplay > 0 && tileMetrics.extractPxExact > 0">
         <div
           v-for="(t, i) in visibleTiles"
           :key="i"
           class="fap-tile"
+          :class="{ 'fap-tile-animate': animateTiles }"
           :style="t.style"
         >
           <span class="fap-tile-idx">{{ t.idx }}</span>
@@ -71,8 +72,9 @@
         拖动<b>外边框控制点</b>限定分析区域；
         <template v-if="scaleNative > 0">
           比例尺 <b>{{ scaleNative.toFixed(3) }}</b> px/mm；
-          切片步长 <b>{{ stepSizeNative }}</b> px；
-          重叠 <b>{{ Math.round(overlapMm) }}</b> mm 每侧
+          核心边长 <b>{{ tileMetrics.corePx }}</b> px（{{ Math.round(zoneSizeMm) }}mm）；
+          步长 <b>{{ Math.round(tileMetrics.stepPxExact) }}</b> px；
+          <template v-if="overlapMm > 0">重叠 <b>{{ Math.round(overlapMm) }}</b> mm 每侧</template>
         </template>
       </span>
     </div>
@@ -82,6 +84,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { InfoFilled, FullScreen } from '@element-plus/icons-vue'
+import { computeTileMetrics, countTilesInRegion } from '../utils/facadeTileMetrics'
 
 const props = defineProps<{
   imageFile?: File | null
@@ -91,11 +94,14 @@ const props = defineProps<{
   zoneSizeMm: number
   overlapMm: number
   scalePxPerMm?: number
+  /** 微调时网格尺寸过渡动画 */
+  animateTiles?: boolean
 }>()
 
 const emit = defineEmits<{
   'update:frame': [f: { left: number; top: number; right: number; bottom: number }]
   'update:imageSize': [w: number, h: number]
+  'update:tileCount': [count: number]
 }>()
 
 // ── Helpers ────────────────────────────────────────────────────
@@ -158,38 +164,28 @@ const scaleNative = computed<number>(() => {
 // scale in DISPLAY pixel space
 const scaleDisplay = computed<number>(() => {
   // Priority: external scale > calculate from wall dimensions
-  if (props.scalePxPerMm && props.scalePxPerMm > 0) {
-    // scalePxPerMm is px/mm, need to account for display scaling
-    return props.scalePxPerMm * (dispW.value / imgNW.value || 1)
+  if (props.scalePxPerMm && props.scalePxPerMm > 0 && imgNW.value > 0 && dispW.value > 0) {
+    // scalePxPerMm is px/mm in native space, convert to display space
+    return props.scalePxPerMm * (dispW.value / imgNW.value)
   }
   if (!dispW.value || !props.wallWidthM || props.wallWidthM <= 0) return 0
   return dispW.value / (props.wallWidthM * 1000)
 })
 
-// Tile dimensions
-const tileSizeDisplay = computed<number>(() => {
-  const s = scaleDisplay.value
-  if (!s || !props.zoneSizeMm) return 0
-  return (props.zoneSizeMm + 2 * props.overlapMm) * s
-})
-
-const stepDisplay = computed<number>(() => {
-  const s = scaleDisplay.value
-  if (!s || !props.zoneSizeMm) return 0
-  return props.zoneSizeMm * s
-})
-
-const tileSizeNative = computed<number>(() => {
+// Tile dimensions（严格 mm↔px：核心 C×scale，裁切 (C+2D)×scale，步长 C×scale）
+const tileMetrics = computed(() => {
   const s = scaleNative.value
-  if (!s || !props.zoneSizeMm) return 0
-  return Math.round((props.zoneSizeMm + 2 * props.overlapMm) * s)
+  if (!s || !props.zoneSizeMm) {
+    return computeTileMetrics(0, props.zoneSizeMm || 0, props.overlapMm || 0)
+  }
+  return computeTileMetrics(s, props.zoneSizeMm, props.overlapMm || 0)
 })
 
-const stepSizeNative = computed<number>(() => {
-  const s = scaleNative.value
-  if (!s || !props.zoneSizeMm) return 0
-  return Math.round(props.zoneSizeMm * s)
-})
+const scaleToDisplay = computed(() => (imgNW.value > 0 && dispW.value > 0 ? dispW.value / imgNW.value : 1))
+
+const coreSizeDisplay = computed(() => tileMetrics.value.corePxExact * scaleToDisplay.value)
+const extractSizeDisplay = computed(() => tileMetrics.value.extractPxExact * scaleToDisplay.value)
+const stepDisplay = computed(() => tileMetrics.value.stepPxExact * scaleToDisplay.value)
 
 // ── Frame (fraction of full image) ────────────────────────────
 interface Frame { left: number; top: number; right: number; bottom: number }
@@ -210,31 +206,19 @@ const frameStyle = computed(() => ({
 
 // ── Tile grid (display pixel coordinates) ─────────────────────
 const estimatedTileCount = computed<number>(() => {
-  const step = stepDisplay.value
-  const tSize = tileSizeDisplay.value
-  if (!step || !tSize || !dispW.value || !dispH.value) return 0
+  const metrics = tileMetrics.value
+  if (!metrics.stepPxExact || !metrics.extractPxExact || !dispW.value || !dispH.value) return 0
   const f = frame.value
-  const x0 = f.left * dispW.value
-  const y0 = f.top * dispH.value
-  const x1 = f.right * dispW.value
-  const y1 = f.bottom * dispH.value
-  let count = 0
-  for (let ty = y0; ty < y1; ty += step) {
-    for (let tx = x0; tx < x1; tx += step) {
-      const w = Math.min(tSize, x1 - tx)
-      const h = Math.min(tSize, y1 - ty)
-      if (w >= step * 0.3 && h >= step * 0.3) {
-        count++
-      }
-    }
-  }
-  return count
+  const roiW = (f.right - f.left) * imgNW.value
+  const roiH = (f.bottom - f.top) * imgNH.value
+  return countTilesInRegion(roiW, roiH, metrics)
 })
 
 const visibleTiles = computed<{ style: Record<string,string>; idx: number }[]>(() => {
   const step = stepDisplay.value
-  const tSize = tileSizeDisplay.value
-  if (!step || !tSize || !dispW.value || !dispH.value) return []
+  const extract = extractSizeDisplay.value
+  const core = coreSizeDisplay.value
+  if (!step || !extract || !dispW.value || !dispH.value) return []
 
   const f = frame.value
   const x0 = f.left  * dispW.value
@@ -249,20 +233,20 @@ const visibleTiles = computed<{ style: Record<string,string>; idx: number }[]>((
       if (tiles.length >= MAX_DISPLAY_TILES) {
         return tiles
       }
-      // Clip to frame
-      const w = Math.min(tSize, x1 - tx)
-      const h = Math.min(tSize, y1 - ty)
+      const w = Math.min(extract, x1 - tx)
+      const h = Math.min(extract, y1 - ty)
       if (w < step * 0.3 || h < step * 0.3) { idx++; continue }
 
+      // 内框显示 C×C mm 核心区域，外框为含重叠的裁切范围
+      const pad = Math.max(0, (extract - core) / 2)
       tiles.push({
         idx: idx++,
         style: {
           left:   `${tx}px`,
           top:    `${ty}px`,
-          width:  `${Math.min(tSize, x1 - tx + (tSize - step))}px`,
-          height: `${Math.min(tSize, y1 - ty + (tSize - step))}px`,
-          maxWidth: `${x1 - tx}px`,
-          maxHeight: `${y1 - ty}px`,
+          width:  `${w}px`,
+          height: `${h}px`,
+          boxShadow: `inset 0 0 0 2px rgba(103,194,58,0.85), inset 0 0 0 ${pad + 2}px rgba(103,194,58,0.25)`,
         }
       })
     }
@@ -271,6 +255,10 @@ const visibleTiles = computed<{ style: Record<string,string>; idx: number }[]>((
 })
 
 const hiddenCount = computed(() => Math.max(0, estimatedTileCount.value - visibleTiles.value.length))
+
+watch(estimatedTileCount, (n) => {
+  emit('update:tileCount', n)
+}, { immediate: true })
 
 // ── Frame handles ──────────────────────────────────────────────
 const HANDLES = [
@@ -408,6 +396,9 @@ onMounted(() => {
   z-index: 5;
   pointer-events: none;
   overflow: hidden;
+}
+.fap-tile-animate {
+  transition: left 0.15s ease, top 0.15s ease, width 0.15s ease, height 0.15s ease, box-shadow 0.15s ease;
 }
 .fap-tile-idx {
   position: absolute;

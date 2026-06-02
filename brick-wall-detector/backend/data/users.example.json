@@ -1,0 +1,9 @@
+[
+  {
+    "id": 1,
+    "username": "admin",
+    "password": "请部署后修改",
+    "nickname": "系统管理员",
+    "role": "admin"
+  }
+]

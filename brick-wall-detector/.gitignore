@@ -17,9 +17,15 @@ backend/uploads/
 backend/data/facade-jobs/
 uploads/
 
-# 运行时生成的数据（历史记录、日志）
+# 运行时生成的数据（历史记录、日志、本地账号）
 backend/data/history.json
 backend/data/logs.json
+backend/data/users.json
+backend/data/settings.json
+
+# 大模型权重（请自行放置 backend/models/best.pt）
+backend/models/*.pt
+!backend/models/.gitkeep
 
 # 日志（保留 logs/ 目录但忽略所有日志文件）
 logs/*.log

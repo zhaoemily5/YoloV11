@@ -1,0 +1,14 @@
+{
+  "systemName": "红砖墙病害智能检测系统",
+  "systemVersion": "v1.0.0",
+  "modelVersion": "YOLOv11-BrickWall-Plus-v1.0",
+  "confidenceThreshold": 0.3,
+  "iouThreshold": 0.2,
+  "enableHeatmap": true,
+  "enableAutoReport": true,
+  "storageType": "本地存储",
+  "cacheLimit": 500,
+  "cacheStrategy": "LRU",
+  "maxConcurrent": 1,
+  "maxQueueSize": 10
+}

@@ -115,6 +115,8 @@ function getAvailableModels() {
       if (b === 'best.onnx') return 1;
       if (a === 'best.pt') return -1;
       if (b === 'best.pt') return 1;
+      if (a === 'Plus.pt') return -1;
+      if (b === 'Plus.pt') return 1;
       return a.localeCompare(b);
     })
     .map(file => {
@@ -1191,8 +1193,8 @@ function createFacadeJobRecord(params) {
     scalePxPerMm: params.scalePxPerMm || null,
     zoneSizeMm: params.zoneSizeMm || null,
     overlapMm: params.overlapMm != null ? params.overlapMm : null,
-    brickLengthMm: params.brickLengthMm || null,
-    brickWidthMm: params.brickWidthMm || null,
+
+                          brickLengthMm: params.brickLengthMm || null,
     status: 'uploaded',
     progress: 0,
     cancelled: false,
@@ -1311,21 +1313,22 @@ async function createFacadeGridTiles(job) {
   return tileRecords;
 }
 
-// --- 智能比例尺切片（C+2D 为切片边长，C 为步长，D 为单侧重叠）---
+// --- 智能比例尺切片（核心 C mm → C×scale px；裁切含两侧重叠 D → (C+2D)×scale px）---
 async function createAutoScaleTiles(job) {
   const scale   = job.scalePxPerMm;   // px/mm
-  const C_mm    = job.zoneSizeMm;     // 区域边长（mm）
+  const C_mm    = job.zoneSizeMm;     // 正方形核心边长（mm）
   const D_mm    = job.overlapMm;      // 单侧重叠（mm）
 
   if (!scale || scale <= 0 || !C_mm || C_mm <= 0 || D_mm == null || D_mm < 0) {
     throw new Error('自动切片参数无效：scalePxPerMm / zoneSizeMm / overlapMm 必须合法');
   }
 
-  const tileSizePx = Math.round((C_mm + 2 * D_mm) * scale);
-  const stepPx     = Math.round(C_mm * scale);
+  const stepPxExact     = C_mm * scale;
+  const extractPxExact  = (C_mm + 2 * D_mm) * scale;
+  const corePx          = Math.round(C_mm * scale);
 
-  if (tileSizePx < 64 || stepPx < 16) {
-    throw new Error(`自动切片过小 tile=${tileSizePx}px step=${stepPx}px，请增大 C 或检查比例尺`);
+  if (extractPxExact < 64 || stepPxExact < 16) {
+    throw new Error(`自动切片过小 core=${corePx}px extract=${Math.round(extractPxExact)}px step=${Math.round(stepPxExact)}px，请增大 C 或检查比例尺`);
   }
 
   const srcPath  = job.roiSourcePath  || job.sourceImagePath;
@@ -1337,27 +1340,30 @@ async function createAutoScaleTiles(job) {
   const tileRecords = [];
   let rowIndex = 0;
 
-  for (let y = 0; y < srcH; y += stepPx) {
+  for (let y = 0; y < srcH; y += stepPxExact) {
     let colIndex = 0;
-    for (let x = 0; x < srcW; x += stepPx) {
-      const cropW = Math.min(tileSizePx, srcW - x);
-      const cropH = Math.min(tileSizePx, srcH - y);
-      // 跳过过小边缘片（小于步长 30%）
-      if (cropW < stepPx * 0.30 || cropH < stepPx * 0.30) { colIndex++; continue; }
+    for (let x = 0; x < srcW; x += stepPxExact) {
+      const xi = Math.round(x);
+      const yi = Math.round(y);
+      const cropW = Math.min(Math.round(extractPxExact), srcW - xi);
+      const cropH = Math.min(Math.round(extractPxExact), srcH - yi);
+      if (cropW < stepPxExact * 0.30 || cropH < stepPxExact * 0.30) { colIndex++; continue; }
 
       const tileId       = `${job.jobId}_r${rowIndex}_c${colIndex}`;
       const tileFilename = `${tileId}.jpg`;
       const tilePath     = path.join(__dirname, 'uploads/tiles', tileFilename);
 
       await sharp(srcPath)
-        .extract({ left: x, top: y, width: cropW, height: cropH })
+        .extract({ left: xi, top: yi, width: cropW, height: cropH })
         .jpeg({ quality: 92 })
         .toFile(tilePath);
 
       tileRecords.push({
         tileId, rowIndex, colIndex,
-        offsetX: x + cropOffX, offsetY: y + cropOffY,
+        offsetX: xi + cropOffX, offsetY: yi + cropOffY,
         width: cropW, height: cropH,
+        corePx,
+        stepPx: Math.round(stepPxExact),
         tilePath, tileUrl: `/uploads/tiles/${tileFilename}`,
         status: 'created'
       });
@@ -1365,7 +1371,7 @@ async function createAutoScaleTiles(job) {
     }
     rowIndex++;
   }
-  console.log(`[FacadeAuto] 智能切片完成: tile=${tileSizePx}px step=${stepPx}px 共 ${tileRecords.length} 块 (ROI +${cropOffX},+${cropOffY})`);
+  console.log(`[FacadeAuto] 智能切片: core=${corePx}px extract≈${Math.round(extractPxExact)}px step≈${Math.round(stepPxExact)}px 共 ${tileRecords.length} 块`);
   return tileRecords;
 }
 
@@ -1592,7 +1598,7 @@ function getDetectionCenter(bbox) {
   return { x: bbox[0] + bbox[2] / 2, y: bbox[1] + bbox[3] / 2 };
 }
 
-// --- 1m × 1m 网格聚合 ---
+// --- 1m × 1m 网格聚合（坐标原点：左下角 (0,0)，x 向右，y 向上）---
 function buildFacadeGrid(job, detections) {
   const cols = Math.ceil(job.wallWidthM / job.gridSizeM);
   const rows = Math.ceil(job.wallHeightM / job.gridSizeM);
@@ -1600,13 +1606,14 @@ function buildFacadeGrid(job, detections) {
 
   for (let row = 0; row < rows; row++) {
     for (let col = 0; col < cols; col++) {
-      const gridId = `R${row + 1}-C${col + 1}`;
+      const blRow = rows - 1 - row;
+      const gridId = `R${blRow + 1}-C${col + 1}`;
       gridMap.set(gridId, {
         gridId, row, col,
         xM: col * job.gridSizeM,
-        yM: row * job.gridSizeM,
+        yM: blRow * job.gridSizeM,
         widthM: Math.min(job.gridSizeM, job.wallWidthM - col * job.gridSizeM),
-        heightM: Math.min(job.gridSizeM, job.wallHeightM - row * job.gridSizeM),
+        heightM: Math.min(job.gridSizeM, job.wallHeightM - blRow * job.gridSizeM),
         totalCount: 0, totalAreaM2: 0, crackLengthM: 0,
         diseases: {}, detections: [], tileIds: [],
         intensity: 0
@@ -1616,11 +1623,14 @@ function buildFacadeGrid(job, detections) {
 
   detections.forEach(det => {
     const center = getDetectionCenter(det.globalBbox);
+    const imageW = job.roiImageWidth  || job.imageWidth;
+    const imageH = job.roiImageHeight || job.imageHeight;
     const centerXM = center.x * job.pixelToMeterX;
-    const centerYM = center.y * job.pixelToMeterY;
+    const centerYM = (imageH - center.y) * job.pixelToMeterY;
     const col = Math.floor(centerXM / job.gridSizeM);
-    const row = Math.floor(centerYM / job.gridSizeM);
-    const gridId = `R${row + 1}-C${col + 1}`;
+    const blRow = Math.floor(centerYM / job.gridSizeM);
+    const oldRow = rows - 1 - blRow;
+    const gridId = `R${blRow + 1}-C${col + 1}`;
     const grid = gridMap.get(gridId);
     if (!grid) return;
 
@@ -1687,9 +1697,9 @@ app.post('/api/facade/calibrate-scale/:jobId', async (req, res) => {
     if (!job) return res.status(404).json({ success: false, message: '立面任务不存在' });
 
     const brickA = parseFloat(req.body?.brickLengthMm);
-    const brickB = parseFloat(req.body?.brickWidthMm);
-    if (!Number.isFinite(brickA) || brickA <= 0 || !Number.isFinite(brickB) || brickB <= 0) {
-      return res.status(400).json({ success: false, message: 'brickLengthMm（A）和 brickWidthMm（B）必须为正数' });
+    const brickB = parseFloat(req.body?.brickWidthMm) || 0;
+    if (!Number.isFinite(brickA) || brickA <= 0) {
+      return res.status(400).json({ success: false, message: 'brickLengthMm（A）必须为正数' });
     }
 
     const wallScale = job.imageWidth / (job.wallWidthM * 1000);  // px/mm（墙体尺寸基准）
@@ -1741,7 +1751,21 @@ app.post('/api/facade/calibrate-scale/:jobId', async (req, res) => {
   }
 });
 
-// --- 手动框选砖块比例尺标定接口 ---
+// --- 框选砖块比例尺：长边→A、短边→B，按 A/B 加权平均 ---
+function computeWeightedBrickScale(rectLongPx, rectShortPx, brickLengthMm, brickWidthMm) {
+  const scaleFromLength = rectLongPx / brickLengthMm;
+  let scaleFromWidth = scaleFromLength;
+  if (Number.isFinite(rectShortPx) && rectShortPx > 0 && Number.isFinite(brickWidthMm) && brickWidthMm > 0) {
+    scaleFromWidth = rectShortPx / brickWidthMm;
+  }
+  const denom = brickLengthMm + (brickWidthMm > 0 ? brickWidthMm : 0);
+  const scale = denom > 0
+    ? (scaleFromLength * brickLengthMm + scaleFromWidth * (brickWidthMm > 0 ? brickWidthMm : 0)) / denom
+    : scaleFromLength;
+  return { scale, scaleFromLength, scaleFromWidth };
+}
+
+// --- 手动画线砖块比例尺标定接口（框选矩形，长/宽双轴加权） ---
 app.post('/api/facade/manual-scale/:jobId', async (req, res) => {
   try {
     const job = loadFacadeJob(req.params.jobId);
@@ -1753,35 +1777,50 @@ app.post('/api/facade/manual-scale/:jobId', async (req, res) => {
         !Number.isFinite(brickLengthMm) || brickLengthMm <= 0) {
       return res.status(400).json({
         success: false,
-        message: '参数无效：长砖像素和砖块长度必须为正数'
+        message: '参数无效：框选长边像素和砖块长度 A 必须为正数'
       });
     }
 
-    const scaleFromLength = longBrickPx / brickLengthMm;
-    let finalScale = scaleFromLength;
+    const { scale: finalScale, scaleFromLength, scaleFromWidth } = computeWeightedBrickScale(
+      longBrickPx,
+      shortBrickPx,
+      brickLengthMm,
+      brickWidthMm
+    );
 
-    if (Number.isFinite(shortBrickPx) && shortBrickPx > 0 &&
-        Number.isFinite(brickWidthMm) && brickWidthMm > 0) {
-      const scaleFromWidth = shortBrickPx / brickWidthMm;
-      finalScale = (scaleFromLength + scaleFromWidth) / 2;
-    }
+    const calculatedWallWidthM = (job.imageWidth / finalScale) / 1000;
+    const calculatedWallHeightM = (job.imageHeight / finalScale) / 1000;
 
     const wallScale = job.imageWidth / (job.wallWidthM * 1000);
     const discrepancy = Math.abs(finalScale - wallScale) / (wallScale + 1e-9);
 
-    console.log(`[ManualScale] 手动框选标定: ${finalScale.toFixed(4)} px/mm | 墙体基准: ${wallScale.toFixed(4)} px/mm | 偏差: ${(discrepancy*100).toFixed(1)}%`);
+    console.log(`[ManualScale] 框选标定: ${finalScale.toFixed(4)} px/mm (长=${scaleFromLength.toFixed(4)}, 宽=${scaleFromWidth.toFixed(4)}) | 墙体基准: ${wallScale.toFixed(4)} px/mm | 偏差: ${(discrepancy*100).toFixed(1)}%`);
+    console.log(`[ManualScale] 更新任务: wallWidthM=${calculatedWallWidthM.toFixed(2)}m, wallHeightM=${calculatedWallHeightM.toFixed(2)}m`);
+
+    job.scalePxPerMm = Number(finalScale.toFixed(5));
+    job.wallWidthM = calculatedWallWidthM;
+    job.wallHeightM = calculatedWallHeightM;
+    job.pixelToMeterX = calculatedWallWidthM / job.imageWidth;
+    job.pixelToMeterY = calculatedWallHeightM / job.imageHeight;
+    job.brickLengthMm = brickLengthMm;
+    if (Number.isFinite(brickWidthMm) && brickWidthMm > 0) job.brickWidthMm = brickWidthMm;
+    job.updatedAt = new Date().toISOString();
+    saveFacadeJob(job);
 
     res.json({
       success: true,
       scalePxPerMm: Number(finalScale.toFixed(5)),
       scaleFromLength: Number(scaleFromLength.toFixed(5)),
+      scaleFromWidth: Number(scaleFromWidth.toFixed(5)),
       wallBasedScale: wallScale,
       discrepancyPct: Math.round(discrepancy * 100),
       method: 'manual-brick-selection',
       longBrickPx,
       shortBrickPx: shortBrickPx || 0,
       brickLengthMm,
-      brickWidthMm
+      brickWidthMm,
+      wallWidthM: calculatedWallWidthM,
+      wallHeightM: calculatedWallHeightM
     });
   } catch (error) {
     console.error('Manual scale calibration error:', error);
@@ -2105,6 +2144,134 @@ app.post('/api/facade/cancel/:jobId', (req, res) => {
     res.json({ success: true, message: '已终止当前识别进程', jobId: job.jobId });
   } catch (error) {
     res.status(500).json({ success: false, message: '终止识别失败: ' + error.message });
+  }
+});
+
+// --- 导出立面普查坐标文件 ---
+app.get('/api/facade/export-coords/:jobId', (req, res) => {
+  try {
+    const job = loadFacadeJob(req.params.jobId);
+    if (!job) return res.status(404).json({ success: false, message: '立面任务不存在' });
+
+    const detections = job.detections || [];
+    const grids = job.grids || [];
+
+    const coordLines = [
+      '========================================',
+      '  红砖墙病害检测坐标文件 - 立面普查模式',
+      '========================================',
+      '',
+      `项目名称: ${job.projectName || '立面普查'}`,
+      `墙面名称: ${job.wallName || '矮墙立面'}`,
+      `墙面尺寸: ${job.wallWidthM || 0} m × ${job.wallHeightM || 0} m`,
+      `网格尺寸: ${job.gridSizeM || 1} m`,
+      `检测时间: ${job.finishedAt || new Date().toISOString()}`,
+      `病害总数: ${detections.length} 处`,
+      '',
+      '----------------------------------------',
+      '  一、全局病害坐标',
+      '----------------------------------------'
+    ];
+
+    const diseaseNames = ['风化', '泛碱', '裂缝', '植物附着', '缺损'];
+    const diseaseColors = {
+      '风化': '#e74c3c', '泛碱': '#3498db', '裂缝': '#f39c12',
+      '植物附着': '#9b59b6', '缺损': '#1abc9c'
+    };
+
+    const detectionsByClass = {};
+    diseaseNames.forEach(n => detectionsByClass[n] = []);
+    detections.forEach(d => {
+      if (detectionsByClass[d.class] !== undefined) {
+        detectionsByClass[d.class].push(d);
+      }
+    });
+
+    let globalId = 1;
+    diseaseNames.forEach(disease => {
+      const items = detectionsByClass[disease] || [];
+      if (items.length === 0) return;
+      coordLines.push('');
+      coordLines.push(`【${disease}】共 ${items.length} 处`);
+      items.forEach(det => {
+        const bbox = det.globalBbox || det.bbox || [];
+        const x1 = bbox[0] || 0;
+        const y1 = bbox[1] || 0;
+        const x2 = bbox[2] ? bbox[0] + bbox[2] : bbox[2] || 0;
+        const y2 = bbox[3] ? bbox[1] + bbox[3] : bbox[3] || 0;
+        const conf = det.confidence || 0;
+        const severity = det.severity || '轻度';
+        const tileId = det.tileId || '';
+        coordLines.push(
+          `  ${String(globalId).padStart(3, '0')} | ${disease} | 置信度: ${(conf * 100).toFixed(1)}% | 严重程度: ${severity}` +
+          ` | 像素坐标: 左上(${Math.round(x1)}, ${Math.round(y1)}) 右下(${Math.round(x2)}, ${Math.round(y2)})` +
+          ` | 网格: ${det.gridId || tileId || 'N/A'}`
+        );
+        globalId++;
+      });
+    });
+
+    coordLines.push('');
+    coordLines.push('----------------------------------------');
+    coordLines.push('  二、网格病害统计');
+    coordLines.push('----------------------------------------');
+    coordLines.push('');
+    coordLines.push('  网格ID  |  行  |  列  |  病害数  |  面积(m²)  |  裂缝(m)  |  风险强度');
+    coordLines.push('  ' + '-'.repeat(70));
+
+    grids.forEach(grid => {
+      const intensity = grid.intensity || 0;
+      let riskLevel = '低';
+      if (intensity >= 0.8) riskLevel = '极高';
+      else if (intensity >= 0.6) riskLevel = '高';
+      else if (intensity >= 0.4) riskLevel = '中';
+      else if (intensity >= 0.2) riskLevel = '较低';
+
+      coordLines.push(
+        `  ${String(grid.gridId || '').padEnd(8)} | ${String(grid.row + 1).padStart(2)} | ${String(grid.col + 1).padStart(2)} | ${String(grid.totalCount || 0).padStart(4)} | ${String((grid.totalAreaM2 || 0).toFixed(3)).padStart(8)} | ${String((grid.crackLengthM || 0).toFixed(3)).padStart(7)} | ${riskLevel}(${(intensity * 100).toFixed(0)}%)`
+      );
+    });
+
+    const totalCount = grids.reduce((s, g) => s + (g.totalCount || 0), 0);
+    const totalArea = grids.reduce((s, g) => s + (g.totalAreaM2 || 0), 0);
+    const totalCrack = grids.reduce((s, g) => s + (g.crackLengthM || 0), 0);
+    coordLines.push('  ' + '-'.repeat(70));
+    coordLines.push(`  合计: 网格数 ${grids.length} | 病害总数 ${totalCount} | 总面积 ${totalArea.toFixed(3)} m² | 裂缝总长 ${totalCrack.toFixed(3)} m`);
+
+    coordLines.push('');
+    coordLines.push('----------------------------------------');
+    coordLines.push('  三、病害分类汇总');
+    coordLines.push('----------------------------------------');
+
+    const summary = job.summary || {};
+    diseaseNames.forEach(disease => {
+      const stat = summary[disease] || {};
+      const count = stat.count || 0;
+      if (count === 0) return;
+      const totalAreaDisease = stat.totalArea || 0;
+      const maxSev = stat.maxSeverity || '轻度';
+      coordLines.push(`  【${disease}】: ${count} 处${totalAreaDisease > 0 ? `, 面积 ${totalAreaDisease.toFixed(3)} m²` : ''}, 最高严重程度: ${maxSev}`);
+    });
+
+    coordLines.push('');
+    coordLines.push('========================================');
+    coordLines.push(`  文件生成时间: ${new Date().toLocaleString('zh-CN')}`);
+    coordLines.push('  红砖墙病害智能检测系统 - 立面普查模式');
+    coordLines.push('========================================');
+
+    const coordTxtContent = coordLines.join('\n');
+
+    res.json({
+      success: true,
+      jobId: job.jobId,
+      coordTxtContent: coordTxtContent,
+      totalDetections: detections.length,
+      totalGrids: grids.length,
+      generatedAt: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('[Facade] 导出坐标文件失败:', error);
+    res.status(500).json({ success: false, message: '导出坐标文件失败: ' + error.message });
   }
 });
 

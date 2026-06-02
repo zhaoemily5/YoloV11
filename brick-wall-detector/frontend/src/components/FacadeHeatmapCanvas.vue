@@ -122,6 +122,23 @@ function drawCanvas() {
   drawDetectionBoxes(ctx, scale)
 }
 
+function getHeatmapColor(intensity: number): string {
+  if (!intensity || intensity <= 0) return 'rgba(0, 0, 0, 0)'
+  const r = Math.round(50 + intensity * 205)
+  const g = Math.round(205 - intensity * 180)
+  const b = Math.round(50 + intensity * 50)
+  const alpha = Math.min(0.75, 0.15 + intensity * 0.60)
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
+
+function getHeatmapBorderColor(intensity: number): string {
+  if (!intensity || intensity <= 0) return 'rgba(255, 255, 255, 0.3)'
+  if (intensity < 0.3) return 'rgba(100, 220, 100, 0.6)'
+  if (intensity < 0.6) return 'rgba(255, 200, 50, 0.7)'
+  if (intensity < 0.8) return 'rgba(255, 120, 50, 0.8)'
+  return 'rgba(220, 50, 50, 0.9)'
+}
+
 function drawHeatmap(ctx: CanvasRenderingContext2D, scale: number) {
   props.grids.forEach(grid => {
     if (!grid.intensity || grid.intensity <= 0) return
@@ -131,23 +148,41 @@ function drawHeatmap(ctx: CanvasRenderingContext2D, scale: number) {
     const w = (grid.widthM / props.wallWidthM) * props.imageWidth * scale
     const h = (grid.heightM / props.wallHeightM) * props.imageHeight * scale
 
-    const alpha = Math.min(0.72, 0.18 + grid.intensity * 0.54)
-    ctx.fillStyle = `rgba(231, 76, 60, ${alpha})`
+    ctx.fillStyle = getHeatmapColor(grid.intensity)
     ctx.fillRect(x, y, w, h)
   })
 }
 
 function drawGridLines(ctx: CanvasRenderingContext2D, scale: number) {
   ctx.save()
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.88)'
-  ctx.lineWidth = 1
+  ctx.lineWidth = Math.max(1.5, Math.min(2.5, 1.5 / scale))
 
   props.grids.forEach(grid => {
     const x = (grid.xM / props.wallWidthM) * props.imageWidth * scale
     const y = (grid.yM / props.wallHeightM) * props.imageHeight * scale
     const w = (grid.widthM / props.wallWidthM) * props.imageWidth * scale
     const h = (grid.heightM / props.wallHeightM) * props.imageHeight * scale
+
+    ctx.strokeStyle = getHeatmapBorderColor(grid.intensity)
     ctx.strokeRect(x, y, w, h)
+
+    if (w > 40 * scale && h > 25 * scale) {
+      ctx.fillStyle = grid.intensity > 0
+        ? `rgba(255, 255, 255, ${Math.min(0.95, 0.4 + grid.intensity * 0.55)})`
+        : 'rgba(255, 255, 255, 0.5)'
+      const fontSize = Math.max(10, Math.min(14, 12 * scale))
+      ctx.font = `bold ${fontSize}px sans-serif`
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText(grid.gridId, x + w / 2, y + h / 2)
+
+      if (grid.totalCount > 0 && h > 35 * scale) {
+        const subFontSize = Math.max(8, Math.min(11, 9 * scale))
+        ctx.font = `${subFontSize}px sans-serif`
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.75)'
+        ctx.fillText(`${grid.totalCount}处`, x + w / 2, y + h / 2 + fontSize * 0.9)
+      }
+    }
   })
 
   ctx.restore()
