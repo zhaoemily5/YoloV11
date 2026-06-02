@@ -23,9 +23,7 @@ backend/data/logs.json
 backend/data/users.json
 backend/data/settings.json
 
-# 大模型权重（请自行放置 backend/models/best.pt）
-backend/models/*.pt
-!backend/models/.gitkeep
+# 模型权重目录保留 backend/models/（.pt / .onnx 由 Git LFS 跟踪）
 
 # 日志（保留 logs/ 目录但忽略所有日志文件）
 logs/*.log

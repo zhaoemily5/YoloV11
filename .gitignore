@@ -31,7 +31,3 @@ Thumbs.db
 uploads/
 *.pid
 
-# ---------- 大模型权重（本地放置，勿提交） ----------
-*.pt
-!brick-wall-detector/backend/models/.gitkeep
-
