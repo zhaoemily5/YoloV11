@@ -111,12 +111,25 @@ export function buildProblemReportJson(input: ProblemReportInput): string {
   )
 }
 
-export function downloadBlob(content: string, filename: string, mime: string) {
-  const blob = new Blob([content], { type: mime })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  a.click()
-  URL.revokeObjectURL(url)
+export { downloadBlob } from './reportExport'
+
+export function buildProblemReportHtml(input: ProblemReportInput): string {
+  const { detections, summary, meta } = input
+  const blocks = detections.map((d, i) => {
+    const bbox = d.globalBbox || d.bbox || []
+    return `<div style="margin-bottom:10px;padding:10px;border:1px solid #e4e7ed;border-radius:6px;">
+      <b>${i + 1}. ${d.class || '未知'}</b> — ${d.severity || '—'} — 置信度 ${((d.confidence || 0) * 100).toFixed(1)}%<br/>
+      坐标: (${Math.round(bbox[0] || 0)}, ${Math.round(bbox[1] || 0)}) · 面积 ${d.areaM2?.toFixed(3) || '—'} m²
+      ${d.gridId ? `<br/>网格: ${d.gridId}` : ''}
+    </div>`
+  }).join('')
+  return `
+    <p class="meta">项目：${meta?.projectName || '—'}　墙面：${meta?.wallName || '—'}　病害 ${detections.length} 处</p>
+    <table>
+      <tr><th>受损面积</th><td>${summary?.totalAreaM2 ?? 0} m²</td>
+          <th>裂缝长度</th><td>${summary?.crackLengthM ?? 0} m</td></tr>
+    </table>
+    <h2>病害明细</h2>
+    ${blocks}
+  `
 }

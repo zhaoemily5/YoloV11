@@ -25,9 +25,9 @@
             <el-option v-for="g in grids" :key="g.gridId" :label="g.gridId" :value="g.gridId" />
           </el-select>
           <div class="fpr-export">
-            <el-button size="small" type="primary" plain @click.stop="exportAs('txt')">TXT</el-button>
-            <el-button size="small" type="success" plain @click.stop="exportAs('md')">Markdown</el-button>
-            <el-button size="small" type="warning" plain @click.stop="exportAs('json')">JSON</el-button>
+            <el-button size="small" type="primary" plain :loading="exporting" @click.stop="exportAs('txt')">TXT</el-button>
+            <el-button size="small" type="success" plain :loading="exporting" @click.stop="exportAs('word')">Word</el-button>
+            <el-button size="small" type="warning" plain :loading="exporting" @click.stop="exportAs('pdf')">PDF</el-button>
           </div>
         </div>
 
@@ -48,13 +48,8 @@
 import { ref, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Document } from '@element-plus/icons-vue'
-import {
-  buildProblemReportText,
-  buildProblemReportMarkdown,
-  buildProblemReportJson,
-  downloadBlob,
-  type ProblemReportMeta,
-} from '../utils/facadeProblemReportExport'
+import type { ProblemReportMeta, ProblemReportInput } from '../utils/facadeProblemReportExport'
+import { exportProblemReportFormats } from '../utils/facadeWallReportExport'
 
 const DISEASE_COLORS: Record<string, string> = {
   '风化': '#e74c3c',
@@ -79,6 +74,7 @@ const props = withDefaults(defineProps<{
 const expanded = ref<string[]>([])
 const filterDisease = ref<string | null>(null)
 const filterGrid = ref<string | null>(null)
+const exporting = ref(false)
 
 const filteredDetections = computed(() => {
   let list = props.detections || []
@@ -111,7 +107,7 @@ const textBlocks = computed(() =>
   }))
 )
 
-function reportInput() {
+function reportInput(): ProblemReportInput {
   return {
     detections: filteredDetections.value,
     summary: props.summary,
@@ -120,21 +116,20 @@ function reportInput() {
   }
 }
 
-function exportAs(fmt: 'txt' | 'md' | 'json') {
+async function exportAs(fmt: 'txt' | 'word' | 'pdf') {
   if (!filteredDetections.value.length) {
     ElMessage.warning('暂无病害可导出')
     return
   }
-  const stamp = new Date().toISOString().slice(0, 10)
-  const jobPart = props.meta?.jobId?.slice(0, 8) || 'local'
-  if (fmt === 'txt') {
-    downloadBlob(buildProblemReportText(reportInput()), `病害详细列表_${jobPart}_${stamp}.txt`, 'text/plain;charset=utf-8')
-  } else if (fmt === 'md') {
-    downloadBlob(buildProblemReportMarkdown(reportInput()), `病害详细列表_${jobPart}_${stamp}.md`, 'text/markdown;charset=utf-8')
-  } else {
-    downloadBlob(buildProblemReportJson(reportInput()), `病害详细列表_${jobPart}_${stamp}.json`, 'application/json;charset=utf-8')
+  exporting.value = true
+  try {
+    await exportProblemReportFormats(reportInput(), fmt)
+    ElMessage.success(`已导出 ${fmt.toUpperCase()} 问题汇报`)
+  } catch (e: any) {
+    ElMessage.error(e.message || '导出失败')
+  } finally {
+    exporting.value = false
   }
-  ElMessage.success(`已导出 ${fmt.toUpperCase()} 格式`)
 }
 </script>
 
@@ -191,9 +186,7 @@ function exportAs(fmt: 'txt' | 'md' | 'json') {
   overflow-y: auto;
   padding: 4px 2px;
 }
-.fpr-fill .fpr-blocks {
-  max-height: min(62vh, 720px);
-}
+.fpr-fill .fpr-blocks { max-height: min(62vh, 720px); }
 .fpr-block {
   margin: 0;
   padding: 14px 14px 14px 42px;
@@ -207,7 +200,6 @@ function exportAs(fmt: 'txt' | 'md' | 'json') {
   color: #303133;
   white-space: pre-wrap;
   word-break: break-word;
-  transition: box-shadow 0.2s, border-color 0.2s;
 }
 .fpr-block:hover {
   border-color: #b3d8ff;

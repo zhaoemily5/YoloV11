@@ -1,6 +1,6 @@
 {
   "name": "brick-wall-detector",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "红砖墙病害智能检测与修缮报告系统",
   "private": true,
   "type": "module",

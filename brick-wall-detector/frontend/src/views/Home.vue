@@ -807,14 +807,20 @@
                 :grids="facadeResult.grids"
                 :detections="facadeResult.detections || []"
                 :selected-grid="selectedGrid"
-                :report-loading="facadeReportLoading"
                 @open-grid="openGridSliceDialog"
-                @generate-report="generateFacadeReport"
-                @view-coords="openFacadeCoordDialog"
-                @export-coords="exportFacadeCoordFile"
               />
             </aside>
             </div>
+
+            <!-- 独立：病害严重程度热力图 -->
+            <section v-if="facadeResult" class="facade-heatmap-output-section">
+              <FacadeSeverityHeatmapPanel
+                :image-url="facadeResult.sourceImageUrl || facadeFileUrl"
+                :image-width="facadeResult.imageWidth || facadeImageW"
+                :image-height="facadeResult.imageHeight || facadeImageH"
+                :detections="facadeResult.detections || []"
+              />
+            </section>
 
             <div
               v-if="facadeResult && (facadeResult.detections || []).length"
@@ -834,70 +840,6 @@
               />
             </div>
           </section>
-
-          <transition name="slide-up">
-            <el-card v-if="facadeReport" class="facade-report-card">
-              <el-collapse v-model="facadeReportExpanded">
-                <el-collapse-item name="wall-report">
-                  <template #title>
-                    <div class="section-header" style="width:100%">
-                      <span>{{ facadeReport.title }}</span>
-                      <el-tag :type="riskTagType(facadeReport.overallAssessment.overallRisk)">
-                        {{ facadeReport.overallAssessment.overallRisk }}
-                      </el-tag>
-                    </div>
-                  </template>
-
-              <el-descriptions :column="2" border>
-                <el-descriptions-item label="项目">{{ facadeReport.projectName }}</el-descriptions-item>
-                <el-descriptions-item label="墙面">{{ facadeReport.wallName }}</el-descriptions-item>
-                <el-descriptions-item label="墙面面积">{{ facadeReport.wallAreaM2 }} m²</el-descriptions-item>
-                <el-descriptions-item label="网格尺寸">{{ facadeReport.gridSizeM }} m</el-descriptions-item>
-                <el-descriptions-item label="病害总数">{{ facadeReport.overallAssessment.totalDetections }}</el-descriptions-item>
-                <el-descriptions-item label="受损面积">{{ facadeReport.overallAssessment.totalDamageAreaM2 }} m²</el-descriptions-item>
-                <el-descriptions-item label="裂缝长度">{{ facadeReport.overallAssessment.crackLengthM }} m</el-descriptions-item>
-                <el-descriptions-item label="高风险网格">{{ facadeReport.overallAssessment.highRiskGridCount }}</el-descriptions-item>
-                <el-descriptions-item label="损伤占比">{{ facadeReport.overallAssessment.damageRatio }}%</el-descriptions-item>
-                <el-descriptions-item label="预估造价">¥{{ facadeReport.overallAssessment.totalEstimatedCost }}</el-descriptions-item>
-              </el-descriptions>
-
-              <el-alert
-                class="facade-recommendation"
-                type="warning"
-                :closable="false"
-                :title="facadeReport.overallAssessment.recommendation"
-              />
-
-              <h4 class="facade-section-title">病害分布明细</h4>
-              <el-table :data="facadeReport.diseaseDetails.filter((d: any) => d.detected)" border stripe>
-                <el-table-column prop="name" label="病害" width="100">
-                  <template #default="{ row }">
-                    <span class="d-dot" :style="{ background: row.color }"></span>
-                    {{ row.name }}
-                  </template>
-                </el-table-column>
-                <el-table-column prop="count" label="数量" width="80" />
-                <el-table-column prop="totalArea" label="面积(m²)" width="110" />
-                <el-table-column prop="estimatedCost" label="造价(¥)" width="110" />
-                <el-table-column prop="repairMethod" label="建议工艺">
-                  <template #default="{ row }">
-                    <el-tag v-for="m in (row.repairMethod || [])" :key="m" size="small" style="margin-right:4px">{{ m }}</el-tag>
-                  </template>
-                </el-table-column>
-              </el-table>
-
-              <h4 class="facade-section-title">重点修缮网格 Top {{ facadeReport.topGrids.length }}</h4>
-              <el-table :data="facadeReport.topGrids" border stripe size="small">
-                <el-table-column prop="gridId" label="网格" width="110" />
-                <el-table-column prop="totalCount" label="病害数" width="90" />
-                <el-table-column prop="totalAreaM2" label="面积(m²)" width="110" />
-                <el-table-column prop="crackLengthM" label="裂缝(m)" width="100" />
-                <el-table-column prop="intensity" label="风险强度" />
-              </el-table>
-                </el-collapse-item>
-              </el-collapse>
-            </el-card>
-          </transition>
 
           <GridSliceDialog
             v-model="gridSliceDialogVisible"
@@ -999,7 +941,7 @@
 import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { CircleClose, MagicStick, Crop, Search, ArrowUp, Setting } from '@element-plus/icons-vue'
-import { detectDisease, generateReport as apiGenerateReport, uploadFacadePanorama, analyzeFacade, calibrateBrickScale, manualScaleCalibration, getFacadeReport, exportFacadeCoords, getModels, getModelDefaults, api } from '../api'
+import { detectDisease, generateReport as apiGenerateReport, uploadFacadePanorama, analyzeFacade, calibrateBrickScale, manualScaleCalibration, exportFacadeCoords, getModels, getModelDefaults, api } from '../api'
 import type { DetectionResult, FacadeResult, ModelParams, AvailableModel, QueueProgress } from '../api'
 import RepairReport from '../components/RepairReport.vue'
 import ShootingGuide from '../components/ShootingGuide.vue'
@@ -1012,6 +954,7 @@ import FacadeAutoPreview from '../components/FacadeAutoPreview.vue'
 import FacadeManualScaleSelector from '../components/FacadeManualScaleSelector.vue'
 import FacadeScaleFineTune from '../components/FacadeScaleFineTune.vue'
 import FacadeProblemReport from '../components/FacadeProblemReport.vue'
+import FacadeSeverityHeatmapPanel from '../components/FacadeSeverityHeatmapPanel.vue'
 import FacadeCoordDialog from '../components/FacadeCoordDialog.vue'
 import { buildFacadeCoordText, downloadTextFile } from '../utils/facadeCoordExport'
 import { computeTileMetrics } from '../utils/facadeTileMetrics'
@@ -1149,7 +1092,6 @@ const facadeUseManualScale = ref(false)
 const manualScaleApplying = ref(false)
 const manualScalePreviewScale = ref(0)
 const facadeScaleCalibrated = ref(false)
-const facadeReportExpanded = ref<string[]>([])
 const mandatoryCalibPending = ref(false)
 
 const facadeCoordDialogVisible = ref(false)
@@ -1347,7 +1289,6 @@ function resetFacadeContext() {
   facadePreviewNativeW.value = 0
   facadePreviewNativeH.value = 0
   facadeResult.value = null
-  facadeReport.value = null
   selectedGrid.value = null
   facadeCalibResult.value = null
   facadeUseCalibScale.value = false
@@ -1375,7 +1316,6 @@ function handleFacadeFileChange(file: any) {
   facadePreviewNativeW.value = 0
   facadePreviewNativeH.value = 0
   facadeResult.value = null
-  facadeReport.value = null
   selectedGrid.value = null
   facadeCalibResult.value = null
   facadeUseCalibScale.value = false
@@ -1709,27 +1649,6 @@ function openGridSliceDialog(grid: any) {
   gridSliceDialogVisible.value = true
 }
 
-const facadeReportLoading = ref(false)
-const facadeReport = ref<any | null>(null)
-
-async function generateFacadeReport() {
-  if (!facadeJobId.value) {
-    ElMessage.warning('请先完成立面 AI 诊断')
-    return
-  }
-  try {
-    facadeReportLoading.value = true
-    const result: any = await getFacadeReport(facadeJobId.value)
-    if (!result.success) throw new Error(result.message || '整墙报告生成失败')
-    facadeReport.value = result.report
-    ElMessage.success('整墙修缮报告已生成')
-  } catch (error: any) {
-    ElMessage.error(error.message || '整墙报告生成失败')
-  } finally {
-    facadeReportLoading.value = false
-  }
-}
-
 async function cancelFacadeAnalyze() {
   if (!facadeJobId.value) return
   try {
@@ -1874,12 +1793,6 @@ async function loadModels() {
 
 function diseaseColor(name: string): string {
   return DISEASE_COLORS[name] || '#999'
-}
-
-function riskTagType(risk: string): 'danger' | 'warning' | 'success' {
-  if (risk === '高风险') return 'danger'
-  if (risk === '中风险') return 'warning'
-  return 'success'
 }
 
 function severityType(s: string): 'danger' | 'warning' | 'success' {
@@ -2887,6 +2800,9 @@ async function generateReport() {
   overflow: hidden;
 }
 .facade-stats-panel { min-width: 0; }
+.facade-heatmap-output-section {
+  margin-top: 4px;
+}
 .facade-detection-panel {
   flex: 1;
   display: flex;

@@ -17,17 +17,14 @@
           </el-button>
           <template #dropdown>
             <el-dropdown-menu>
+              <el-dropdown-item command="txt">
+                <el-icon><Document /></el-icon>&ensp;导出 TXT
+              </el-dropdown-item>
               <el-dropdown-item command="word">
                 <el-icon><Document /></el-icon>&ensp;导出 Word (.doc)
               </el-dropdown-item>
-              <el-dropdown-item command="markdown">
-                <el-icon><Memo /></el-icon>&ensp;导出 Markdown (.md)
-              </el-dropdown-item>
-              <el-dropdown-item command="json">
-                <el-icon><DataLine /></el-icon>&ensp;导出 JSON (.json)
-              </el-dropdown-item>
-              <el-dropdown-item divided command="print">
-                <el-icon><Printer /></el-icon>&ensp;打印 / 保存为 PDF
+              <el-dropdown-item command="pdf">
+                <el-icon><Printer /></el-icon>&ensp;导出 PDF
               </el-dropdown-item>
             </el-dropdown-menu>
           </template>
@@ -191,6 +188,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { ElMessage } from 'element-plus'
+import { exportPdfFromHtml, exportTextFile, exportWordFromHtml, escHtml } from '../utils/reportExport'
 
 const props = defineProps<{ report: any }>()
 
@@ -230,15 +228,50 @@ function download(content: string | Blob, name: string, mime: string) {
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
-function handleExport(cmd: string) {
+async function handleExport(cmd: string) {
   try {
-    if (cmd === 'word') exportWord()
-    else if (cmd === 'markdown') exportMarkdown()
-    else if (cmd === 'json') exportJson()
-    else if (cmd === 'print') printReport()
+    if (cmd === 'txt') exportTxt()
+    else if (cmd === 'word') exportWord()
+    else if (cmd === 'pdf') await exportPdf()
   } catch (e: any) {
     ElMessage.error('导出失败: ' + (e?.message || '未知错误'))
   }
+}
+
+function buildReportText(): string {
+  const r = props.report
+  const a = r.overallAssessment
+  const lines: string[] = [
+    r.title || '红砖墙病害修缮报告',
+    `生成时间: ${fmtDate(r.generatedAt)}`,
+    '',
+    '【总体评估】',
+    `病害种类: ${a.totalDiseaseTypes} 种`,
+    `检出总数: ${a.totalDetections} 处`,
+    `风化面积: ${a.weatheringArea} m²`,
+    `泛碱面积: ${a.efflorescenceArea} m²`,
+    `综合风险: ${a.overallRisk}`,
+    `建议: ${a.recommendation}`,
+    '',
+    '【病害详情】',
+  ]
+  r.diseaseDetails.forEach((d: any, i: number) => {
+    lines.push(`${i + 1}. ${d.name} — ${d.detected ? `${d.count} 处` : '未检出'}`)
+    if (d.detected) lines.push(`   描述: ${d.description}`)
+  })
+  return lines.join('\n')
+}
+
+function exportTxt() {
+  exportTextFile(buildReportText(), filename('txt'))
+  ElMessage.success('TXT 报告已导出')
+}
+
+async function exportPdf() {
+  const r = props.report
+  const html = buildWordHtmlBody()
+  await exportPdfFromHtml(html, filename('pdf'), r.title)
+  ElMessage.success('PDF 报告已导出')
 }
 
 function exportJson() {
@@ -360,11 +393,9 @@ function exportMarkdown() {
   ElMessage.success('Markdown 报告已导出')
 }
 
-function exportWord() {
+function buildWordHtmlBody() {
   const r = props.report
   const a = r.overallAssessment
-
-  const esc = (s: any) => String(s ?? '').replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]!))
 
   const diseaseHtml = (r.diseaseDetails || []).map((d: any, i: number) => {
     const statText = d.detected 
@@ -372,18 +403,18 @@ function exportWord() {
       : '未检出'
     return `
     <div style="border:1px solid #ccc; border-left:4px solid ${d.color || '#999'}; padding:12px 16px; margin-bottom:14px;">
-      <h3 style="margin:0 0 10px;color:#003a66;">${i + 1}. ${esc(d.name)}
+      <h3 style="margin:0 0 10px;color:#003a66;">${i + 1}. ${escHtml(d.name)}
         <span style="font-size:12px;color:#666;font-weight:normal;">
           — ${statText}
         </span>
       </h3>
-      <p><b>病害描述：</b>${esc(d.description)}</p>
+      <p><b>病害描述：</b>${escHtml(d.description)}</p>
       <p><b>修缮方法：</b></p>
       <ol style="margin:4px 0 8px 24px;">
-        ${(d.repairMethod || []).map((s: string) => `<li>${esc(s)}</li>`).join('')}
+        ${(d.repairMethod || []).map((s: string) => `<li>${escHtml(s)}</li>`).join('')}
       </ol>
-      <p><b>修缮材料：</b>${esc(d.materials)}</p>
-      <p><b>预防措施：</b>${esc(d.preventionMeasures)}</p>
+      <p><b>修缮材料：</b>${escHtml(d.materials)}</p>
+      <p><b>预防措施：</b>${escHtml(d.preventionMeasures)}</p>
     </div>`
   }).join('')
 
@@ -393,56 +424,32 @@ function exportWord() {
     ...(r.repairPlan?.routineItems  || []).map((it: any) => ({ ...it, suffix: '纳入日常维护' }))
   ]
   const priorityHtml = allRepairList.length
-    ? `<ul style="margin:0 0 0 24px;">${allRepairList.map((it: any) => `<li><b>${esc(it.name)}</b> — ${it.count} 处，${it.suffix}</li>`).join('')}</ul>`
+    ? `<ul style="margin:0 0 0 24px;">${allRepairList.map((it: any) => `<li><b>${escHtml(it.name)}</b> — ${it.count} 处，${it.suffix}</li>`).join('')}</ul>`
     : '<p>无需修缮项目</p>'
 
-  const html = `<!DOCTYPE html>
-<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
-<head>
-<meta charset="utf-8">
-<title>${esc(r.title || '砖墙修缮报告')}</title>
-<style>
-  body { font-family: 'Microsoft YaHei', SimSun, sans-serif; line-height:1.7; color:#333; padding:20px; }
-  h1 { color:#003a66; text-align:center; margin-bottom:8px; }
-  h2 { color:#0070C0; border-bottom:2px solid #0070C0; padding-bottom:6px; margin-top:24px; }
-  h3 { color:#003a66; }
-  table { border-collapse:collapse; width:100%; margin:10px 0; }
-  td, th { border:1px solid #888; padding:8px 12px; }
-  th { background:#e6f2fb; }
-  .meta { text-align:center; color:#666; font-size:12px; margin-bottom:20px; }
-  .risk { padding:12px 16px; border-radius:4px; margin:14px 0; }
-  .risk-high { background:#fff5f5; border:1px solid #fecaca; color:#dc2626; }
-  .risk-mid { background:#fffbeb; border:1px solid #fde68a; color:#d97706; }
-  .risk-low { background:#f0fdf4; border:1px solid #bbf7d0; color:#16a34a; }
-</style>
-</head>
-<body>
-  <h1>${esc(r.title || '红砖墙病害修缮报告')}</h1>
-  <p class="meta">生成时间：${fmtDate(r.generatedAt)}　·　检测模型：YOLOv11-BrickWall　·　部署平台：阿里云 PAI</p>
-
+  return `
+  <p class="meta">生成时间：${fmtDate(r.generatedAt)}　·　检测模型：YOLOv11-BrickWall</p>
   <h2>01 总体评估</h2>
   <table>
     <tr><th>病害种类</th><td>${a.totalDiseaseTypes} 种</td>
         <th>检出总数</th><td>${a.totalDetections} 处</td></tr>
     <tr><th>风化面积</th><td>${a.weatheringArea} m²</td>
         <th>泛碱面积</th><td>${a.efflorescenceArea} m²</td></tr>
-    <tr><th>修缮费用初估</th><td colspan="3" style="color:#b45309;">功能待开发</td></tr>
   </table>
   <div class="risk ${riskClass.value}">
-    <b>综合风险等级：${esc(a.overallRisk)}</b><br/>${esc(a.recommendation)}
+    <b>综合风险等级：${escHtml(a.overallRisk)}</b><br/>${escHtml(a.recommendation)}
   </div>
-  ${r.professionalNote ? `<p style="color:#0369a1;background:#f0f9ff;padding:10px;border-radius:4px;margin-top:10px;">ℹ️ ${esc(r.professionalNote)}</p>` : ''}
-
+  ${r.professionalNote ? `<p>ℹ️ ${escHtml(r.professionalNote)}</p>` : ''}
   <h2>02 五类病害详情与修缮方案</h2>
   ${diseaseHtml}
-
   <h2>03 修缮建议</h2>
   ${priorityHtml || '<p>无需修缮</p>'}
-</body>
-</html>`
+  `
+}
 
-  const blob = new Blob(['\ufeff' + html], { type: 'application/msword' })
-  download(blob, filename('doc'), 'application/msword')
+function exportWord() {
+  const r = props.report
+  exportWordFromHtml(buildWordHtmlBody(), filename('doc'))
   ElMessage.success('Word 报告已导出')
 }
 </script>

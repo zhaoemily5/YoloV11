@@ -26,15 +26,6 @@
       </div>
     </div>
 
-    <div class="coord-actions">
-      <el-button type="primary" plain size="small" @click="$emit('view-coords')">
-        查看病害坐标
-      </el-button>
-      <el-button type="success" plain size="small" @click="$emit('export-coords')">
-        导出坐标 TXT
-      </el-button>
-    </div>
-
     <el-divider />
 
     <div v-if="selectedGrid" class="selected-grid">
@@ -47,15 +38,6 @@
       </el-button>
     </div>
     <el-empty v-else description="点击左侧热力图格子查看局部详情" />
-
-    <el-button
-      type="primary"
-      class="facade-report-btn"
-      :loading="reportLoading"
-      @click="$emit('generate-report')"
-    >
-      生成整墙修缮报告
-    </el-button>
   </el-card>
 </template>
 
@@ -67,14 +49,10 @@ const props = defineProps<{
   grids: any[]
   detections?: any[]
   selectedGrid: any | null
-  reportLoading?: boolean
 }>()
 
 defineEmits<{
   (event: 'open-grid', grid: any): void
-  (event: 'generate-report'): void
-  (event: 'view-coords'): void
-  (event: 'export-coords'): void
 }>()
 
 const highRiskGridCount = computed(() => props.grids.filter(g => g.intensity >= 0.65).length)
@@ -102,11 +80,8 @@ const highRiskGridCount = computed(() => props.grids.filter(g => g.intensity >= 
   background: linear-gradient(90deg, #f0f7ff, #fff);
   border-bottom: 1px solid #d9ecff;
 }
-.facade-report-btn { margin-top: auto; }
-.coord-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .selected-grid h4 { margin-bottom: 8px; color: #003a66; }
-.selected-grid { line-height: 1.8; }
-.facade-report-btn { width: 100%; font-weight: 600; letter-spacing: 1px; }
+.selected-grid { line-height: 1.8; flex: 1; }
 @media (max-width: 768px) {
   .metric-list { grid-template-columns: repeat(2, 1fr); gap: 8px; }
   .metric-card { padding: 12px 10px; }
