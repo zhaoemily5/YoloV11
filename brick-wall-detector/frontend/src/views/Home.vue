@@ -890,6 +890,7 @@
       v-model:visible="facadeCoordDialogVisible"
       :loading="facadeCoordLoading"
       :detections="facadeCoordDetections"
+      :coord-meta="getFacadeCoordMeta()"
       :coord-txt-content="facadeCoordTxtContent"
       @export="exportFacadeCoordFile"
     />
@@ -1112,6 +1113,9 @@ const facadeProblemReportMeta = computed(() => ({
   wallName: facadeForm.wallName,
   jobId: facadeJobId.value,
   finishedAt: facadeResult.value?.finishedAt || new Date().toISOString(),
+  scalePxPerMm: facadeResult.value?.scalePxPerMm || facadeActiveScale.value || facadeSliceScale.value || 0,
+  imageWidth: facadeResult.value?.imageWidth || facadeImageW.value || facadePreviewNativeW.value,
+  imageHeight: facadeResult.value?.imageHeight || facadeImageH.value || facadePreviewNativeH.value,
 }))
 
 function computeLocalDiscrepancyPct(scale: number): number {
@@ -1664,6 +1668,11 @@ async function cancelFacadeAnalyze() {
 }
 
 function getFacadeCoordMeta() {
+  const scale =
+    facadeResult.value?.scalePxPerMm ||
+    facadeActiveScale.value ||
+    facadeSliceScale.value ||
+    0
   return {
     projectName: facadeForm.projectName,
     wallName: facadeForm.wallName,
@@ -1672,6 +1681,9 @@ function getFacadeCoordMeta() {
     gridSizeM: facadeResult.value?.gridSizeM || facadeForm.gridSizeM,
     jobId: facadeJobId.value,
     finishedAt: new Date().toISOString(),
+    scalePxPerMm: scale,
+    imageWidth: facadeResult.value?.imageWidth || facadeImageW.value || facadePreviewNativeW.value,
+    imageHeight: facadeResult.value?.imageHeight || facadeImageH.value || facadePreviewNativeH.value,
   }
 }
 

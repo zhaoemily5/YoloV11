@@ -1,8 +1,13 @@
+import { formatRealBboxLine, hasValidCoordTransform, pixelBboxToRealCm } from './facadeCoordTransform'
+
 export interface ProblemReportMeta {
   projectName?: string
   wallName?: string
   jobId?: string
   finishedAt?: string
+  scalePxPerMm?: number
+  imageWidth?: number
+  imageHeight?: number
 }
 
 export interface ProblemReportInput {
@@ -12,16 +17,23 @@ export interface ProblemReportInput {
   meta?: ProblemReportMeta
 }
 
-function formatDetectionBlock(det: any, index: number): string {
+function formatDetectionBlock(det: any, index: number, meta?: ProblemReportMeta): string {
   const bbox = det.globalBbox || det.bbox || []
-  const x1 = Math.round(bbox[0] || 0)
-  const y1 = Math.round(bbox[1] || 0)
-  const x2 = Math.round((bbox[0] || 0) + (bbox[2] || 0))
-  const y2 = Math.round((bbox[1] || 0) + (bbox[3] || 0))
+  const x1 = bbox[0] || 0
+  const y1 = bbox[1] || 0
+  const x2 = (bbox[0] || 0) + (bbox[2] || 0)
+  const y2 = (bbox[1] || 0) + (bbox[3] || 0)
   const lines = [
     `[${index}] ${det.class || '未知'} · ${det.severity || '—'} · 置信度 ${((det.confidence || 0) * 100).toFixed(1)}%`,
-    `  像素坐标: (${x1}, ${y1}) → (${x2}, ${y2})`,
   ]
+  if (hasValidCoordTransform(meta)) {
+    const real = pixelBboxToRealCm(x1, y1, x2, y2, {
+      scalePxPerMm: meta!.scalePxPerMm!,
+      imageHeight: meta!.imageHeight!,
+    })
+    lines.push(`  ${formatRealBboxLine(real)}`)
+  }
+  lines.push(`  像素坐标: (${Math.round(x1)}, ${Math.round(y1)}) → (${Math.round(x2)}, ${Math.round(y2)})`)
   if (det.areaM2 > 0) lines.push(`  受损面积: ${det.areaM2.toFixed(3)} m²`)
   if (det.lengthM > 0) lines.push(`  裂缝长度: ${det.lengthM.toFixed(3)} m`)
   if (det.gridId) lines.push(`  所属网格: ${det.gridId}`)
@@ -49,7 +61,7 @@ export function buildProblemReportText(input: ProblemReportInput): string {
   }
   lines.push('', '──────────────────────────────────────', '  病害明细', '──────────────────────────────────────', '')
   detections.forEach((d, i) => {
-    lines.push(formatDetectionBlock(d, i + 1))
+    lines.push(formatDetectionBlock(d, i + 1, meta))
     lines.push('')
   })
   lines.push('══════════════════════════════════════')
@@ -117,9 +129,21 @@ export function buildProblemReportHtml(input: ProblemReportInput): string {
   const { detections, summary, meta } = input
   const blocks = detections.map((d, i) => {
     const bbox = d.globalBbox || d.bbox || []
+    const x1 = bbox[0] || 0
+    const y1 = bbox[1] || 0
+    const x2 = x1 + (bbox[2] || 0)
+    const y2 = y1 + (bbox[3] || 0)
+    let coordHtml = `像素: (${Math.round(x1)}, ${Math.round(y1)}) → (${Math.round(x2)}, ${Math.round(y2)})`
+    if (hasValidCoordTransform(meta)) {
+      const real = pixelBboxToRealCm(x1, y1, x2, y2, {
+        scalePxPerMm: meta!.scalePxPerMm!,
+        imageHeight: meta!.imageHeight!,
+      })
+      coordHtml = `实际(cm): 中心(${real.centerXCm.toFixed(1)}, ${real.centerYCm.toFixed(1)}) · ${coordHtml}`
+    }
     return `<div style="margin-bottom:10px;padding:10px;border:1px solid #e4e7ed;border-radius:6px;">
       <b>${i + 1}. ${d.class || '未知'}</b> — ${d.severity || '—'} — 置信度 ${((d.confidence || 0) * 100).toFixed(1)}%<br/>
-      坐标: (${Math.round(bbox[0] || 0)}, ${Math.round(bbox[1] || 0)}) · 面积 ${d.areaM2?.toFixed(3) || '—'} m²
+      ${coordHtml} · 面积 ${d.areaM2?.toFixed(3) || '—'} m²
       ${d.gridId ? `<br/>网格: ${d.gridId}` : ''}
     </div>`
   }).join('')

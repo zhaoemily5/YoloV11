@@ -50,6 +50,7 @@ import { ElMessage } from 'element-plus'
 import { Document } from '@element-plus/icons-vue'
 import type { ProblemReportMeta, ProblemReportInput } from '../utils/facadeProblemReportExport'
 import { exportProblemReportFormats } from '../utils/facadeWallReportExport'
+import { formatCm, hasValidCoordTransform, pixelBboxToRealCm } from '../utils/facadeCoordTransform'
 
 const DISEASE_COLORS: Record<string, string> = {
   '风化': '#e74c3c',
@@ -85,14 +86,25 @@ const filteredDetections = computed(() => {
 
 function formatBlock(det: any, index: number): string {
   const bbox = det.globalBbox || det.bbox || []
-  const x1 = Math.round(bbox[0] || 0)
-  const y1 = Math.round(bbox[1] || 0)
-  const x2 = Math.round((bbox[0] || 0) + (bbox[2] || 0))
-  const y2 = Math.round((bbox[1] || 0) + (bbox[3] || 0))
+  const x1 = bbox[0] || 0
+  const y1 = bbox[1] || 0
+  const x2 = (bbox[0] || 0) + (bbox[2] || 0)
+  const y2 = (bbox[1] || 0) + (bbox[3] || 0)
   const lines = [
     `${det.class} · ${det.severity || '—'} · 置信度 ${((det.confidence || 0) * 100).toFixed(1)}%`,
-    `像素坐标: (${x1}, ${y1}) → (${x2}, ${y2})`,
   ]
+  const meta = props.meta
+  if (hasValidCoordTransform(meta)) {
+    const real = pixelBboxToRealCm(x1, y1, x2, y2, {
+      scalePxPerMm: meta!.scalePxPerMm!,
+      imageHeight: meta!.imageHeight!,
+    })
+    lines.push(
+      `实际坐标(cm): 中心(${formatCm(real.centerXCm)}, ${formatCm(real.centerYCm)}) ` +
+        `左下(${formatCm(real.x1Cm)}, ${formatCm(real.y1Cm)}) 右上(${formatCm(real.x2Cm)}, ${formatCm(real.y2Cm)})`
+    )
+  }
+  lines.push(`像素坐标: (${Math.round(x1)}, ${Math.round(y1)}) → (${Math.round(x2)}, ${Math.round(y2)})`)
   if (det.areaM2 > 0) lines.push(`受损面积: ${det.areaM2.toFixed(3)} m²`)
   if (det.lengthM > 0) lines.push(`裂缝长度: ${det.lengthM.toFixed(3)} m`)
   if (det.gridId) lines.push(`所属网格: ${det.gridId}`)

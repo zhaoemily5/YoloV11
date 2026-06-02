@@ -1,3 +1,10 @@
+import {
+  type CoordTransformContext,
+  formatRealBboxLine,
+  hasValidCoordTransform,
+  pixelBboxToRealCm,
+} from './facadeCoordTransform'
+
 export interface FacadeCoordMeta {
   projectName?: string
   wallName?: string
@@ -6,6 +13,9 @@ export interface FacadeCoordMeta {
   gridSizeM?: number
   jobId?: string
   finishedAt?: string
+  scalePxPerMm?: number
+  imageWidth?: number
+  imageHeight?: number
 }
 
 function bboxCorners(bbox: number[] | undefined) {
@@ -17,6 +27,14 @@ function bboxCorners(bbox: number[] | undefined) {
   return { x1, y1, x2: x1 + w, y2: y1 + h }
 }
 
+function coordTransformFromMeta(meta: FacadeCoordMeta): CoordTransformContext | null {
+  if (!hasValidCoordTransform(meta)) return null
+  return {
+    scalePxPerMm: meta.scalePxPerMm!,
+    imageHeight: meta.imageHeight!,
+  }
+}
+
 /** 客户端生成坐标 TXT（与后端 export-coords 格式基本一致） */
 export function buildFacadeCoordText(
   detections: any[],
@@ -25,6 +43,7 @@ export function buildFacadeCoordText(
   meta: FacadeCoordMeta = {}
 ): string {
   const diseaseNames = ['风化', '泛碱', '裂缝', '植物附着', '缺损']
+  const transform = coordTransformFromMeta(meta)
   const lines: string[] = [
     '========================================',
     '  红砖墙病害检测坐标文件 - 立面普查模式',
@@ -36,11 +55,25 @@ export function buildFacadeCoordText(
     `网格尺寸: ${meta.gridSizeM || 1} m`,
     `检测时间: ${meta.finishedAt || new Date().toISOString()}`,
     `病害总数: ${detections.length} 处`,
+  ]
+
+  if (transform) {
+    lines.push(
+      `比例尺: ${meta.scalePxPerMm!.toFixed(4)} px/mm`,
+      `图像尺寸: ${meta.imageWidth} × ${meta.imageHeight} px`,
+      '坐标说明: 实际坐标单位为 cm；墙面坐标系原点在图像左下角，x 向右、y 向上',
+      '换算公式: 实际(cm) = 像素 / 比例尺(px/mm) / 10'
+    )
+  } else {
+    lines.push('比例尺: 未标定（仅输出像素坐标，无法换算实际坐标）')
+  }
+
+  lines.push(
     '',
     '----------------------------------------',
     '  一、全局病害坐标',
-    '----------------------------------------',
-  ]
+    '----------------------------------------'
+  )
 
   const byClass: Record<string, any[]> = {}
   diseaseNames.forEach(n => { byClass[n] = [] })
@@ -56,9 +89,14 @@ export function buildFacadeCoordText(
     lines.push(`【${disease}】共 ${items.length} 处`)
     items.forEach(det => {
       const { x1, y1, x2, y2 } = bboxCorners(det.globalBbox || det.bbox)
+      let coordPart = ` | 像素: 左上(${Math.round(x1)}, ${Math.round(y1)}) 右下(${Math.round(x2)}, ${Math.round(y2)})`
+      if (transform) {
+        const real = pixelBboxToRealCm(x1, y1, x2, y2, transform)
+        coordPart = ` | ${formatRealBboxLine(real)} | 像素: 左上(${Math.round(x1)}, ${Math.round(y1)}) 右下(${Math.round(x2)}, ${Math.round(y2)})`
+      }
       lines.push(
         `  ${String(globalId).padStart(3, '0')} | ${disease} | 置信度: ${((det.confidence || 0) * 100).toFixed(1)}% | 严重程度: ${det.severity || '轻度'}` +
-        ` | 像素坐标: 左上(${Math.round(x1)}, ${Math.round(y1)}) 右下(${Math.round(x2)}, ${Math.round(y2)})` +
+        coordPart +
         ` | 网格: ${det.gridId || det.tileId || 'N/A'}`
       )
       globalId++
@@ -117,10 +155,11 @@ export function downloadTextFile(content: string, filename: string) {
   URL.revokeObjectURL(url)
 }
 
-export function detectionTableRows(detections: any[]) {
+export function detectionTableRows(detections: any[], meta: FacadeCoordMeta = {}) {
+  const transform = coordTransformFromMeta(meta)
   return detections.map((det, index) => {
     const { x1, y1, x2, y2 } = bboxCorners(det.globalBbox || det.bbox)
-    return {
+    const row: Record<string, unknown> = {
       index: index + 1,
       id: det.id || `${det.tileId || 'det'}-${index + 1}`,
       class: det.class,
@@ -133,6 +172,17 @@ export function detectionTableRows(detections: any[]) {
       gridId: det.gridId || '—',
       tileId: det.tileId || '—',
       areaM2: det.areaM2,
+      hasRealCoord: !!transform,
     }
+    if (transform) {
+      const real = pixelBboxToRealCm(x1, y1, x2, y2, transform)
+      row.centerXCm = Number(real.centerXCm.toFixed(1))
+      row.centerYCm = Number(real.centerYCm.toFixed(1))
+      row.x1Cm = Number(real.x1Cm.toFixed(1))
+      row.y1Cm = Number(real.y1Cm.toFixed(1))
+      row.x2Cm = Number(real.x2Cm.toFixed(1))
+      row.y2Cm = Number(real.y2Cm.toFixed(1))
+    }
+    return row
   })
 }

@@ -2071,6 +2071,7 @@ app.post('/api/facade/analyze/:jobId', async (req, res) => {
         success: true, jobId: j.jobId, status: j.status, progress: j.progress,
         sourceImageUrl: j.sourceImageUrl ? `${j.sourceImageUrl}?v=${rv}` : null,
         imageWidth: j.imageWidth, imageHeight: j.imageHeight,
+        scalePxPerMm: j.scalePxPerMm || null,
         wallWidthM: j.wallWidthM, wallHeightM: j.wallHeightM, gridSizeM: j.gridSizeM,
         totalTiles: tiles.length, failedTiles, totalDetections: detections.length,
         stitchedImageUrl: stitchResult ? `${stitchResult.url}?v=${rv}` : null,
@@ -2147,6 +2148,34 @@ app.post('/api/facade/cancel/:jobId', (req, res) => {
   }
 });
 
+function pxToCm(px, scalePxPerMm) {
+  if (!scalePxPerMm || scalePxPerMm <= 0) return 0;
+  return px / scalePxPerMm / 10;
+}
+
+function pixelBboxToRealCm(x1, y1, x2, y2, scalePxPerMm, imageHeight) {
+  return {
+    x1Cm: pxToCm(x1, scalePxPerMm),
+    y1Cm: pxToCm(imageHeight - y2, scalePxPerMm),
+    x2Cm: pxToCm(x2, scalePxPerMm),
+    y2Cm: pxToCm(imageHeight - y1, scalePxPerMm),
+    centerXCm: pxToCm((x1 + x2) / 2, scalePxPerMm),
+    centerYCm: pxToCm(imageHeight - (y1 + y2) / 2, scalePxPerMm),
+    widthCm: Math.abs(pxToCm(x2 - x1, scalePxPerMm)),
+    heightCm: Math.abs(pxToCm(y2 - y1, scalePxPerMm)),
+  };
+}
+
+function formatRealBboxLine(real) {
+  const f = (n) => Number(n).toFixed(1);
+  return (
+    `实际坐标(cm): 左下(${f(real.x1Cm)}, ${f(real.y1Cm)}) ` +
+    `右上(${f(real.x2Cm)}, ${f(real.y2Cm)}) ` +
+    `中心(${f(real.centerXCm)}, ${f(real.centerYCm)}) ` +
+    `尺寸 ${f(real.widthCm)}×${f(real.heightCm)} cm`
+  );
+}
+
 // --- 导出立面普查坐标文件 ---
 app.get('/api/facade/export-coords/:jobId', (req, res) => {
   try {
@@ -2155,6 +2184,9 @@ app.get('/api/facade/export-coords/:jobId', (req, res) => {
 
     const detections = job.detections || [];
     const grids = job.grids || [];
+    const scalePxPerMm = job.scalePxPerMm;
+    const imageHeight = job.imageHeight || 0;
+    const hasScale = scalePxPerMm && scalePxPerMm > 0 && imageHeight > 0;
 
     const coordLines = [
       '========================================',
@@ -2167,11 +2199,25 @@ app.get('/api/facade/export-coords/:jobId', (req, res) => {
       `网格尺寸: ${job.gridSizeM || 1} m`,
       `检测时间: ${job.finishedAt || new Date().toISOString()}`,
       `病害总数: ${detections.length} 处`,
+    ];
+
+    if (hasScale) {
+      coordLines.push(
+        `比例尺: ${Number(scalePxPerMm).toFixed(4)} px/mm`,
+        `图像尺寸: ${job.imageWidth || 0} × ${imageHeight} px`,
+        '坐标说明: 实际坐标单位为 cm；墙面坐标系原点在图像左下角，x 向右、y 向上',
+        '换算公式: 实际(cm) = 像素 / 比例尺(px/mm) / 10'
+      );
+    } else {
+      coordLines.push('比例尺: 未标定（仅输出像素坐标，无法换算实际坐标）');
+    }
+
+    coordLines.push(
       '',
       '----------------------------------------',
       '  一、全局病害坐标',
       '----------------------------------------'
-    ];
+    );
 
     const diseaseNames = ['风化', '泛碱', '裂缝', '植物附着', '缺损'];
     const diseaseColors = {
@@ -2202,9 +2248,14 @@ app.get('/api/facade/export-coords/:jobId', (req, res) => {
         const conf = det.confidence || 0;
         const severity = det.severity || '轻度';
         const tileId = det.tileId || '';
+        let coordPart = ` | 像素: 左上(${Math.round(x1)}, ${Math.round(y1)}) 右下(${Math.round(x2)}, ${Math.round(y2)})`;
+        if (hasScale) {
+          const real = pixelBboxToRealCm(x1, y1, x2, y2, scalePxPerMm, imageHeight);
+          coordPart = ` | ${formatRealBboxLine(real)} | 像素: 左上(${Math.round(x1)}, ${Math.round(y1)}) 右下(${Math.round(x2)}, ${Math.round(y2)})`;
+        }
         coordLines.push(
           `  ${String(globalId).padStart(3, '0')} | ${disease} | 置信度: ${(conf * 100).toFixed(1)}% | 严重程度: ${severity}` +
-          ` | 像素坐标: 左上(${Math.round(x1)}, ${Math.round(y1)}) 右下(${Math.round(x2)}, ${Math.round(y2)})` +
+          coordPart +
           ` | 网格: ${det.gridId || tileId || 'N/A'}`
         );
         globalId++;
