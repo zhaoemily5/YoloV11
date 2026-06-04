@@ -33,7 +33,7 @@
         :style="{ top: p(frame.top), bottom: p(1 - frame.bottom), left: p(frame.right) }" />
 
       <!-- Tile grid overlay (within frame, display space) -->
-      <template v-if="dispW > 0 && scaleDisplay > 0 && tileMetrics.extractPxExact > 0">
+      <template v-if="dispW > 0 && scaleDisplay > 0 && tileMetrics.extractPxExact > 0 && !scaleInvalid">
         <div
           v-for="(t, i) in visibleTiles"
           :key="i"
@@ -49,9 +49,9 @@
         </div>
       </template>
 
-      <!-- No-scale hint -->
-      <div v-else-if="dispW > 0 && (!wallWidthM || !zoneSizeMm)" class="fap-hint-overlay">
-        请填写墙面宽度和区域边长 C 以预览切片网格
+      <!-- No-scale / abnormal step hint -->
+      <div v-else-if="dispW > 0 && scaleInvalid" class="fap-hint-overlay">
+        {{ scaleInvalidMessage }}
       </div>
 
       <!-- Frame border -->
@@ -107,6 +107,8 @@ const emit = defineEmits<{
 // ── Helpers ────────────────────────────────────────────────────
 const p = (v: number) => `${v * 100}%`
 const MAX_DISPLAY_TILES = 120
+/** 显示空间下过小的步长会导致密集错乱网格 */
+const MIN_STEP_DISPLAY_PX = 48
 
 // ── Image ──────────────────────────────────────────────────────
 const containerRef = ref<HTMLDivElement | null>(null)
@@ -154,22 +156,28 @@ onBeforeUnmount(() => {
 })
 
 // ── Scale computations ─────────────────────────────────────────
-// scale in NATIVE pixel space
+// 仅使用已确认的比例尺（px/mm），不再用墙面宽度反推，避免与标定结果冲突
 const scaleNative = computed<number>(() => {
   if (props.scalePxPerMm && props.scalePxPerMm > 0) return props.scalePxPerMm
-  if (!imgNW.value || !props.wallWidthM || props.wallWidthM <= 0) return 0
-  return imgNW.value / (props.wallWidthM * 1000)
+  return 0
 })
 
-// scale in DISPLAY pixel space
 const scaleDisplay = computed<number>(() => {
-  // Priority: external scale > calculate from wall dimensions
-  if (props.scalePxPerMm && props.scalePxPerMm > 0 && imgNW.value > 0 && dispW.value > 0) {
-    // scalePxPerMm is px/mm in native space, convert to display space
-    return props.scalePxPerMm * (dispW.value / imgNW.value)
-  }
-  if (!dispW.value || !props.wallWidthM || props.wallWidthM <= 0) return 0
-  return dispW.value / (props.wallWidthM * 1000)
+  if (!scaleNative.value || !imgNW.value || !dispW.value) return 0
+  return scaleNative.value * (dispW.value / imgNW.value)
+})
+
+const scaleInvalid = computed(() => {
+  if (!props.zoneSizeMm || props.zoneSizeMm <= 0) return true
+  if (!scaleNative.value) return true
+  const step = stepDisplay.value
+  return step > 0 && step < MIN_STEP_DISPLAY_PX
+})
+
+const scaleInvalidMessage = computed(() => {
+  if (!props.zoneSizeMm || props.zoneSizeMm <= 0) return '请设置区域边长 C 以预览切片网格'
+  if (!scaleNative.value) return '请先完成砖块画线标定并确认比例尺'
+  return '比例尺异常（切片步长过小），请重新画线标定或微调比例尺'
 })
 
 // Tile dimensions（严格 mm↔px：核心 C×scale，裁切 (C+2D)×scale，步长 C×scale）

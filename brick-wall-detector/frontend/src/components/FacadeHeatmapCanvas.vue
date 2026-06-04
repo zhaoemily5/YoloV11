@@ -3,7 +3,7 @@
     <div v-if="isAnalyzing" class="ai-overlay">
       <div class="ai-card">
         <div class="ai-title">AI 深度普查诊断中，请稍候...</div>
-        <div class="ai-subtitle">正在建立砖缝比例尺、分块识别并汇总整墙病害</div>
+        <div class="ai-subtitle">正在建立比例尺、分块识别并汇总整墙病害</div>
         <div class="ai-progress-shell">
           <div class="ai-progress-track">
             <div class="ai-progress-glow"></div>

@@ -600,15 +600,6 @@
                       <el-icon><Crop /></el-icon>&nbsp;手动砖块画线标定
                     </el-button>
                     <el-button
-                      size="small"
-                      plain
-                      :loading="facadeCalibrating"
-                      :disabled="!facadeScaleCalibrated"
-                      @click="runBrickCalibration"
-                    >
-                      <el-icon><MagicStick /></el-icon>&nbsp;自动砖缝标定
-                    </el-button>
-                    <el-button
                       v-if="manualScaleResult?.success"
                       size="small"
                       link
@@ -682,7 +673,7 @@
 
                   <FacadeAutoPreview
                     :image-file="facadeFile"
-                    :preview-image-url="!facadeUseManualScale ? (facadeCalibResult?.annotatedImageUrl || '') : ''"
+                    :preview-image-url="facadeFileUrl"
                     :wall-width-m="calculatedWallWidth || facadeForm.wallWidthM"
                     :wall-height-m="calculatedWallHeight || facadeForm.wallHeightM"
                     :zone-size-mm="facadeBrickParams.C"
@@ -703,10 +694,6 @@
                         </template>
                       </span>
                     </div>
-                    <div class="asp-row" v-if="facadeCalibResult?.success">
-                      <span class="asp-label">砖缝标定（可选）</span>
-                      <span class="asp-val asp-green">{{ facadeCalibResult.scalePxPerMm.toFixed(4) }} px/mm</span>
-                    </div>
                     <div class="asp-row">
                       <span class="asp-label">当前生效比例尺</span>
                       <span class="asp-val asp-active">{{ facadeSliceScale.toFixed(4) }} px/mm</span>
@@ -719,9 +706,6 @@
                   <span>请先完成砖块画线标定，关闭弹窗后在下方进行视觉微调</span>
                 </div>
 
-                <div v-if="facadeScaleCalibrated && facadeCalibResult?.annotatedImageUrl" class="calib-thumb">
-                  <img :src="facadeCalibResult.annotatedImageUrl" alt="砖缝标定" />
-                </div>
               </div>
 
               <div class="facade-actions">
@@ -788,7 +772,7 @@
               <!-- 回退：无切片数据时显示热图，或分析中显示进度条 -->
               <FacadeHeatmapCanvas
                 v-else
-                :image-url="facadeResult?.sourceImageUrl || facadeCalibResult?.annotatedImageUrl || facadeFileUrl"
+                :image-url="facadeResult?.sourceImageUrl || facadeFileUrl"
                 :image-width="facadeResult?.imageWidth || facadeImageW"
                 :image-height="facadeResult?.imageHeight || facadeImageH"
                 :wall-width-m="facadeResult?.wallWidthM || calculatedWallWidth || facadeForm.wallWidthM"
@@ -948,8 +932,8 @@
 <script setup lang="ts">
 import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick, defineAsyncComponent } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { CircleClose, MagicStick, Crop, Search, ArrowUp, Setting } from '@element-plus/icons-vue'
-import { detectDisease, generateReport as apiGenerateReport, uploadFacadePanorama, analyzeFacade, calibrateBrickScale, manualScaleCalibration, exportFacadeCoords, getFacadeReport, getModels, getModelDefaults, api } from '../api'
+import { CircleClose, Crop, Search, ArrowUp, Setting } from '@element-plus/icons-vue'
+import { detectDisease, generateReport as apiGenerateReport, uploadFacadePanorama, analyzeFacade, manualScaleCalibration, exportFacadeCoords, getFacadeReport, getModels, getModelDefaults, api } from '../api'
 import type { DetectionResult, FacadeResult, ModelParams, AvailableModel, QueueProgress } from '../api'
 import RepairReport from '../components/RepairReport.vue'
 import FacadeRepairReport from '../components/FacadeRepairReport.vue'
@@ -969,7 +953,7 @@ const FacadeSeverityHeatmapPanel = defineAsyncComponent(
   () => import('../components/FacadeSeverityHeatmapPanel.vue')
 )
 import { buildFacadeCoordText, downloadTextFile } from '../utils/facadeCoordExport'
-import { computeTileMetrics } from '../utils/facadeTileMetrics'
+import { computeTileMetrics, countTilesInRegion } from '../utils/facadeTileMetrics'
 
 // ==================== Constants ====================
 const MAX_FILE_MB = 10
@@ -1076,25 +1060,13 @@ function loadBrickParams() {
     if (s) Object.assign(facadeBrickParams, JSON.parse(s))
   } catch (_) {}
 }
-let calibTimeout: any = null
-watch(facadeBrickParams, (v, oldV) => {
+watch(facadeBrickParams, (v) => {
   localStorage.setItem('facade_brick_params', JSON.stringify(v))
-  if (facadeScaleCalibrated.value && facadeJobId.value && !facadeUseManualScale.value) {
-    if (!oldV || v.A !== oldV.A || v.B !== oldV.B) {
-      clearTimeout(calibTimeout)
-      calibTimeout = setTimeout(() => void runBrickCalibration({ quiet: true }), 800)
-    }
-  }
 }, { deep: true })
 
 // 本地图片原生尺寸（FacadeAutoPreview 回传，用于预上传阶段的比例尺预估）
 const facadePreviewNativeW = ref(0)
 const facadePreviewNativeH = ref(0)
-
-// 砖缝标定状态
-const facadeCalibrating  = ref(false)
-const facadeCalibResult  = ref<any>(null)
-const facadeUseCalibScale = ref(false)
 
 // 手动框选标定状态
 const manualScaleDialogVisible = ref(false)
@@ -1175,12 +1147,9 @@ watch(facadeFile, (f) => {
   facadeFileUrl.value = f ? URL.createObjectURL(f) : ''
 })
 
-/** 当前生效标定比例尺（px/mm），仅来自砖块/砖缝标定 */
+/** 当前生效标定比例尺（px/mm），仅来自手动画线 + 视觉微调 */
 const currentScalePxPerMm = computed<number>(() => {
-  if (facadeUseManualScale.value && manualScaleResult.value?.scalePxPerMm > 0)
-    return manualScaleResult.value.scalePxPerMm
-  if (facadeUseCalibScale.value && facadeCalibResult.value?.scalePxPerMm > 0)
-    return facadeCalibResult.value.scalePxPerMm
+  if (manualScaleResult.value?.scalePxPerMm > 0) return manualScaleResult.value.scalePxPerMm
   return 0
 })
 
@@ -1234,40 +1203,21 @@ const facadeAutoTilePx = computed<number>(() => {
   const m = computeTileMetrics(facadeSliceScale.value, facadeBrickParams.C, facadeBrickParams.D)
   return m.extractPx
 })
-// 估算切片数量（与后端 createAutoScaleTiles / FacadeAutoPreview 保持一致的迭代过滤逻辑）
 const facadeAutoTileCount = computed<number>(() => {
   const W = facadeImageW.value || facadePreviewNativeW.value
   const H = facadeImageH.value || facadePreviewNativeH.value
   const m = computeTileMetrics(facadeSliceScale.value, facadeBrickParams.C, facadeBrickParams.D)
-  const s = facadeSliceScale.value || 0
-  const C = facadeBrickParams.C
-  const D = facadeBrickParams.D
-  const stepPx = Math.round(C * s)
-  const tilePx = Math.round((C + 2 * D) * s)
-  if (!m.stepPxExact || !stepPx || !tilePx || !W || !H) return 0
+  if (!m.stepPxExact || !W || !H) return 0
 
-  // 考虑 frame 裁剪区域（与 FacadeAutoPreview / 后端 ROI 保持一致）
   const f = facadeFrame.value
   const isFullFrame = !f || (f.left < 0.005 && f.top < 0.005 && f.right > 0.995 && f.bottom > 0.995)
-  let x0 = 0, y0 = 0, x1 = W, y1 = H
+  let roiW = W
+  let roiH = H
   if (!isFullFrame && f) {
-    x0 = Math.round(f.left * W)
-    y0 = Math.round(f.top * H)
-    x1 = Math.round(f.right * W)
-    y1 = Math.round(f.bottom * H)
+    roiW = Math.round((f.right - f.left) * W)
+    roiH = Math.round((f.bottom - f.top) * H)
   }
-
-  let count = 0
-  for (let y = y0; y < y1; y += stepPx) {
-    for (let x = x0; x < x1; x += stepPx) {
-      const cropW = Math.min(tilePx, x1 - x)
-      const cropH = Math.min(tilePx, y1 - y)
-      if (cropW >= stepPx * 0.3 && cropH >= stepPx * 0.3) {
-        count++
-      }
-    }
-  }
-  return count
+  return countTilesInRegion(roiW, roiH, m)
 })
 
 const facadeForm = reactive({
@@ -1306,8 +1256,6 @@ function resetFacadeContext() {
   facadeResult.value = null
   facadeReport.value = null
   selectedGrid.value = null
-  facadeCalibResult.value = null
-  facadeUseCalibScale.value = false
   resetManualScaleState()
   facadeProgress.value = 0
   facadeQueueMsg.value = ''
@@ -1334,8 +1282,6 @@ function handleFacadeFileChange(file: any) {
   facadeResult.value = null
   facadeReport.value = null
   selectedGrid.value = null
-  facadeCalibResult.value = null
-  facadeUseCalibScale.value = false
   resetManualScaleState()
   facadeProgress.value = 0
   facadeQueueMsg.value = ''
@@ -1401,41 +1347,6 @@ async function uploadFacade(options: { openManualDialog?: boolean; quiet?: boole
   } finally {
     facadeUploading.value = false
   }
-}
-
-async function runBrickCalibration(options: { quiet?: boolean } = {}) {
-  if (!facadeScaleCalibrated.value) {
-    if (!options.quiet) ElMessage.warning('请先完成砖块画线标定')
-    return false
-  }
-  if (!facadeJobId.value) {
-    const uploaded = await ensureFacadeUploaded({ quiet: options.quiet })
-    if (!uploaded) {
-      if (!options.quiet) ElMessage.warning('请先上传图片再标定')
-      return false
-    }
-  }
-  try {
-    facadeCalibrating.value = true
-    const result: any = await calibrateBrickScale(
-      facadeJobId.value, facadeBrickParams.A, facadeBrickParams.B
-    )
-    facadeCalibResult.value = result
-    if (result.success) {
-      facadeUseCalibScale.value = true
-      facadeUseManualScale.value = false
-      syncWallSizeFromScale(result.scalePxPerMm)
-      ElMessage.success(`砖缝标定完成：${result.scalePxPerMm.toFixed(4)} px/mm（偏差 ${result.discrepancyPct}%）`)
-    } else {
-      ElMessage.warning(result.message || '砖缝特征不明显，建议使用手动砖块画线标定')
-    }
-  } catch (e: any) {
-    ElMessage.error(e.message || '砖缝标定失败')
-    return false
-  } finally {
-    facadeCalibrating.value = false
-  }
-  return !!facadeCalibResult.value?.success
 }
 
 // ── 手动框选比例尺标定 ──────────────────────────────────────────
@@ -1507,7 +1418,6 @@ async function onManualScaleLineConfirmed(
     method: 'manual-line-calibration',
   }
   facadeUseManualScale.value = true
-  facadeUseCalibScale.value = false
   syncWallSizeFromScale(baseScale)
   facadeScaleCalibrated.value = false
   mandatoryCalibPending.value = false
@@ -1537,7 +1447,6 @@ async function onFineTuneConfirmed(finalScale: number, scaleFactor: number) {
       discrepancyPct: computeLocalDiscrepancyPct(finalScale),
     }
     facadeUseManualScale.value = true
-    facadeUseCalibScale.value = false
     syncWallSizeFromScale(finalScale)
     facadeScaleCalibrated.value = true
     ElMessage.success(`比例尺已确认：${finalScale.toFixed(4)} px/mm，C=${facadeBrickParams.C}mm → ${mappedCorePx.value}px`)
@@ -1585,11 +1494,8 @@ async function runFacadeAnalyze() {
       if (!uploaded || !facadeJobId.value) throw new Error('上传后未获取到任务 ID')
     }
 
-    if (!facadeUseManualScale.value && !facadeUseCalibScale.value && !facadeCalibResult.value?.success) {
-      await runBrickCalibration({ quiet: true })
-    }
     if (facadeActiveScale.value <= 0) {
-      ElMessage.warning('无法建立比例尺，请先完成手动砖块标定或确认墙体尺寸')
+      ElMessage.warning('无法建立比例尺，请先完成手动砖块画线标定并确认')
       return
     }
 
