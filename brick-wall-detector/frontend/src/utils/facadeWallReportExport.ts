@@ -25,14 +25,16 @@ export function buildFacadeWallReportText(report: any): string {
     `  高风险网格: ${a.highRiskGridCount ?? 0}`,
     `  损伤占比: ${a.damageRatio ?? 0}%`,
     `  综合风险: ${a.overallRisk ?? '—'}`,
-    `  预估造价: ¥${a.totalEstimatedCost ?? 0}`,
     `  建议: ${a.recommendation || '—'}`,
     '',
     '【病害详情与修缮方案】',
   ]
   ;(report.diseaseDetails || []).forEach((d: any, i: number) => {
     lines.push('')
-    lines.push(`${i + 1}. ${d.name}${d.detected ? ` — ${d.count} 处` : ' — 未检出'}`)
+    const stat = d.detected
+      ? `${d.count} 处${d.totalArea ? `，面积 ${d.totalArea} m²` : ''}${d.maxSeverity && d.maxSeverity !== '—' ? `，最高 ${d.maxSeverity}` : ''}`
+      : '未检出'
+    lines.push(`${i + 1}. ${d.name} — ${stat}`)
     if (!d.detected) return
     if (d.description) lines.push(`   描述: ${d.description}`)
     if (d.repairMethod?.length) {
@@ -40,7 +42,6 @@ export function buildFacadeWallReportText(report: any): string {
       d.repairMethod.forEach((m: string, j: number) => lines.push(`     ${j + 1}. ${m}`))
     }
     if (d.materials) lines.push(`   材料: ${d.materials}`)
-    if (d.estimatedCost) lines.push(`   费用估算: ¥${d.estimatedCost}`)
   })
   lines.push('', '【重点修缮网格】')
   ;(report.topGrids || []).forEach((g: any, i: number) => {
@@ -64,11 +65,12 @@ export function buildFacadeWallReportHtml(report: any): string {
       return `<p><b>${i + 1}. ${escHtml(d.name)}</b> — 未检出</p>`
     }
     const steps = (d.repairMethod || []).map((s: string, j: number) => `<li>${escHtml(s)}</li>`).join('')
+    const stat = `${d.count} 处 · ${d.totalArea || 0} m²${d.maxSeverity && d.maxSeverity !== '—' ? ` · 最高${escHtml(d.maxSeverity)}` : ''}`
     return `<div style="margin-bottom:14px;padding:12px;border:1px solid #e4e7ed;border-radius:8px;">
-      <h3 style="margin:0 0 8px;color:${d.color || '#003a66'}">${i + 1}. ${escHtml(d.name)} — ${d.count} 处 · ${d.totalArea || 0} m²</h3>
+      <h3 style="margin:0 0 8px;color:${d.color || '#003a66'}">${i + 1}. ${escHtml(d.name)} — ${stat}</h3>
       <p>${escHtml(d.description || '')}</p>
       ${steps ? `<ol>${steps}</ol>` : ''}
-      <p><b>材料：</b>${escHtml(d.materials || '—')} · <b>费用：</b>¥${d.estimatedCost || 0}</p>
+      <p><b>材料：</b>${escHtml(d.materials || '—')}</p>
     </div>`
   }).join('')
   const gridRows = (report.topGrids || [])
@@ -82,7 +84,7 @@ export function buildFacadeWallReportHtml(report: any): string {
       <tr><th>病害种类</th><td>${a.totalDiseaseTypes ?? 0}</td><th>病害总数</th><td>${a.totalDetections}</td></tr>
       <tr><th>受损面积</th><td>${a.totalDamageAreaM2} m²</td><th>裂缝长度</th><td>${a.crackLengthM} m</td></tr>
       <tr><th>高风险网格</th><td>${a.highRiskGridCount}</td><th>损伤占比</th><td>${a.damageRatio}%</td></tr>
-      <tr><th>综合风险</th><td>${escHtml(a.overallRisk)}</td><th>预估造价</th><td>¥${a.totalEstimatedCost}</td></tr>
+      <tr><th>综合风险</th><td colspan="3">${escHtml(a.overallRisk)}</td></tr>
     </table>
     <p><b>修缮建议：</b>${escHtml(a.recommendation)}</p>
     ${report.professionalNote ? `<p style="color:#0369a1;">ℹ️ ${escHtml(report.professionalNote)}</p>` : ''}

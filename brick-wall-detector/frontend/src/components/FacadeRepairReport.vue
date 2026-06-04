@@ -72,11 +72,11 @@
           </div>
         </div>
 
-        <div class="assess-card ac-gold cost-card">
-          <div class="ac-icon"><el-icon :size="22"><Coin /></el-icon></div>
+        <div class="assess-card ac-orange ratio-card">
+          <div class="ac-icon"><el-icon :size="22"><PieChart /></el-icon></div>
           <div class="ac-body">
-            <div class="ac-val">¥{{ formatCost(a.totalEstimatedCost) }}</div>
-            <div class="ac-lbl">修缮费用初估 · 损伤占比 {{ a.damageRatio }}%</div>
+            <div class="ac-val">{{ a.damageRatio }}<small> %</small></div>
+            <div class="ac-lbl">墙面损伤占比（实测统计）</div>
           </div>
         </div>
 
@@ -138,10 +138,6 @@
               <span class="dd-fl">预防措施</span>
               <span class="dd-fv">{{ d.preventionMeasures }}</span>
             </div>
-            <div class="dd-field dd-cost">
-              <span class="dd-fl">费用估算</span>
-              <span class="dd-fv cost-val">¥{{ formatCost(d.estimatedCost) }}（按{{ d.unit }}计）</span>
-            </div>
           </div>
         </div>
       </div>
@@ -197,7 +193,7 @@
 import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
-  Document, Download, ArrowDown, Grid, Histogram, Warning, Location, Coin, InfoFilled,
+  Document, Download, ArrowDown, Grid, Histogram, Warning, Location, PieChart, InfoFilled,
 } from '@element-plus/icons-vue'
 import { exportFacadeWallReport } from '../utils/facadeWallReportExport'
 
@@ -234,10 +230,6 @@ const repairSuggestions = computed(() => {
 })
 
 function fmtDate(iso: string) { return iso ? new Date(iso).toLocaleString('zh-CN') : '-' }
-function formatCost(cost: number) {
-  if (!cost) return '0'
-  return cost >= 10000 ? (cost / 10000).toFixed(1) + '万' : cost.toLocaleString()
-}
 function gridIntensityColor(v: number) {
   if (v >= 0.8) return '#dc2626'
   if (v >= 0.6) return '#d97706'
@@ -293,8 +285,8 @@ async function handleExport(cmd: string) {
 .ac-teal { background: linear-gradient(135deg, #0d9488, #14b8a6); }
 .ac-red { background: linear-gradient(135deg, #dc2626, #f87171); }
 .ac-purple { background: linear-gradient(135deg, #7c3aed, #a78bfa); }
-.ac-gold { background: linear-gradient(135deg, #d97706, #fbbf24); }
-.cost-card { margin-bottom: 16px; }
+.ac-orange { background: linear-gradient(135deg, #ea580c, #fb923c); }
+.ratio-card { margin-bottom: 16px; }
 .ac-icon {
   width: 42px; height: 42px; border-radius: 10px; background: rgba(255,255,255,.2);
   display: flex; align-items: center; justify-content: center; flex-shrink: 0;
@@ -342,8 +334,6 @@ async function handleExport(cmd: string) {
   width: 20px; height: 20px; border-radius: 50%; background: #e6f2fb; color: #0070C0;
   font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
 }
-.dd-cost { background: #fffbeb; border-radius: 8px; padding: 10px 12px !important; }
-.cost-val { color: #d97706; font-weight: 700; }
 .repair-list { padding-left: 0; list-style: none; margin: 0; }
 .repair-list li { margin-bottom: 10px; font-size: 14px; color: #444; line-height: 1.7; display: flex; align-items: center; gap: 8px; }
 .no-repair { color: #888; text-align: center; padding: 16px; }

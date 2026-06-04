@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-06-02
+
+### Added
+- 病害严重程度热力图（heatmap.js）：纯热力图 + 无标注正射叠加图；三种点权重；可调渲染半径（4–600 px 量级）
+- 墙坐标体系统一为 **米**（m），原点左下、X 右 Y 上
+- 立面坐标导出、比例尺微调与 ROI 裁切支持（`cropOffsetX/Y`）
+- 文档体系：`docs/`（API、部署、热力图、课题专章）；仓库根 `README.md`
+- 前端 `vendor/heatmap.js` ESM 补丁（ImageData / h337 兼容）
+
+### Changed
+- 报告与导出移除费用估算、造价等不确定内容，仅保留可核实检测与统计项
+- 立面热力图底图改用 `sourceImageUrl`，修复 ROI 坐标偏移与 bbox 格式误判
+- 项目 README 全面重写，对齐当前目录结构（`frontend/` + `backend/`）
+
+### Fixed
+- heatmap.js 在 Vite 下 `Cannot assign to read only property 'data'` / `h337` 未定义
+- 病害详细列表重复标题与空白占位
+- Vite 开发服务器 SPA 回退导致页面无法加载
+
 ## [2.0.0] - 2026-05-21
 
 ### Added

@@ -1,5 +1,5 @@
 /**
- * 墙面坐标系（实际尺寸，单位 cm）
+ * 墙面坐标系（实际尺寸，单位 m）
  * - 原点：图片左下角 (0, 0)
  * - X 轴：向右为正
  * - Y 轴：向上为正
@@ -8,31 +8,31 @@
  */
 
 export const WALL_COORD_SYSTEM_DESC =
-  '墙面坐标系：原点在图片左下角 (0,0)，X 轴向右，Y 轴向上，单位 cm'
+  '墙面坐标系：原点在图片左下角 (0,0)，X 轴向右，Y 轴向上，单位 m'
 
 export const PIXEL_COORD_SYSTEM_DESC =
   '图像像素坐标：原点在图片左上角，仅作对照参考'
 
-export interface WallPointCm {
-  xCm: number
-  yCm: number
+export interface WallPointM {
+  xM: number
+  yM: number
 }
 
-export interface RealCoordCm {
+export interface RealCoordM {
   /** 病害框左下角（墙面坐标 X,Y） */
-  bottomLeft: WallPointCm
+  bottomLeft: WallPointM
   /** 病害框右上角（墙面坐标 X,Y） */
-  topRight: WallPointCm
-  center: WallPointCm
-  widthCm: number
-  heightCm: number
-  /** 兼容旧字段 */
-  x1Cm: number
-  y1Cm: number
-  x2Cm: number
-  y2Cm: number
-  centerXCm: number
-  centerYCm: number
+  topRight: WallPointM
+  center: WallPointM
+  widthM: number
+  heightM: number
+  /** 兼容字段 */
+  x1M: number
+  y1M: number
+  x2M: number
+  y2M: number
+  centerXM: number
+  centerYM: number
 }
 
 export interface CoordTransformContext {
@@ -40,70 +40,70 @@ export interface CoordTransformContext {
   imageHeight: number
 }
 
-export function pxToCm(px: number, scalePxPerMm: number): number {
+export function pxToM(px: number, scalePxPerMm: number): number {
   if (!scalePxPerMm || scalePxPerMm <= 0 || !Number.isFinite(px)) return 0
-  return px / scalePxPerMm / 10
+  return px / scalePxPerMm / 1000
 }
 
-/** 图像像素点 → 墙面坐标 (cm) */
-export function pixelPointToWallCm(
+/** 图像像素点 → 墙面坐标 (m) */
+export function pixelPointToWallM(
   px: number,
   py: number,
   ctx: CoordTransformContext
-): WallPointCm {
+): WallPointM {
   return {
-    xCm: pxToCm(px, ctx.scalePxPerMm),
-    yCm: pxToCm(ctx.imageHeight - py, ctx.scalePxPerMm),
+    xM: pxToM(px, ctx.scalePxPerMm),
+    yM: pxToM(ctx.imageHeight - py, ctx.scalePxPerMm),
   }
 }
 
-/** 像素 bbox [x1,y1,x2,y2]（图像左上原点）→ 墙面 bbox（左下原点，cm） */
-export function pixelBboxToRealCm(
+/** 像素 bbox [x1,y1,x2,y2]（图像左上原点）→ 墙面 bbox（左下原点，m） */
+export function pixelBboxToRealM(
   x1: number,
   y1: number,
   x2: number,
   y2: number,
   ctx: CoordTransformContext
-): RealCoordCm {
-  const bottomLeft = pixelPointToWallCm(x1, y2, ctx)
-  const topRight = pixelPointToWallCm(x2, y1, ctx)
-  const center = pixelPointToWallCm((x1 + x2) / 2, (y1 + y2) / 2, ctx)
+): RealCoordM {
+  const bottomLeft = pixelPointToWallM(x1, y2, ctx)
+  const topRight = pixelPointToWallM(x2, y1, ctx)
+  const center = pixelPointToWallM((x1 + x2) / 2, (y1 + y2) / 2, ctx)
   return {
     bottomLeft,
     topRight,
     center,
-    widthCm: Math.abs(topRight.xCm - bottomLeft.xCm),
-    heightCm: Math.abs(topRight.yCm - bottomLeft.yCm),
-    x1Cm: bottomLeft.xCm,
-    y1Cm: bottomLeft.yCm,
-    x2Cm: topRight.xCm,
-    y2Cm: topRight.yCm,
-    centerXCm: center.xCm,
-    centerYCm: center.yCm,
+    widthM: Math.abs(topRight.xM - bottomLeft.xM),
+    heightM: Math.abs(topRight.yM - bottomLeft.yM),
+    x1M: bottomLeft.xM,
+    y1M: bottomLeft.yM,
+    x2M: topRight.xM,
+    y2M: topRight.yM,
+    centerXM: center.xM,
+    centerYM: center.yM,
   }
 }
 
-export function formatCm(n: number, digits = 1): string {
+export function formatM(n: number, digits = 3): string {
   return Number(n).toFixed(digits)
 }
 
-export function formatWallPoint(p: WallPointCm): string {
-  return `X=${formatCm(p.xCm)}, Y=${formatCm(p.yCm)}`
+export function formatWallPoint(p: WallPointM): string {
+  return `X=${formatM(p.xM)}, Y=${formatM(p.yM)}`
 }
 
-export function formatRealBboxLine(real: RealCoordCm): string {
+export function formatRealBboxLine(real: RealCoordM): string {
   return (
-    `墙面坐标(cm): 左下角(${formatWallPoint(real.bottomLeft)}) ` +
+    `墙面坐标(m): 左下角(${formatWallPoint(real.bottomLeft)}) ` +
     `右上角(${formatWallPoint(real.topRight)}) ` +
     `中心(${formatWallPoint(real.center)}) ` +
-    `宽×高 ${formatCm(real.widthCm)}×${formatCm(real.heightCm)} cm`
+    `宽×高 ${formatM(real.widthM)}×${formatM(real.heightM)} m`
   )
 }
 
 export function formatCoordSystemHeaderLines(): string[] {
   return [
     WALL_COORD_SYSTEM_DESC,
-    '换算: X(cm)=像素x÷比例尺÷10；Y(cm)=(图像高度−像素y)÷比例尺÷10',
+    '换算: X(m)=像素x÷比例尺÷1000；Y(m)=(图像高度−像素y)÷比例尺÷1000',
     PIXEL_COORD_SYSTEM_DESC,
   ]
 }

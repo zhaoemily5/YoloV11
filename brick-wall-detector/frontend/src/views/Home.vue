@@ -820,6 +820,10 @@
                 :image-url="facadeResult.sourceImageUrl || facadeFileUrl"
                 :image-width="facadeResult.imageWidth || facadeImageW"
                 :image-height="facadeResult.imageHeight || facadeImageH"
+                :coord-width="(facadeResult as any).stitchedWidth || facadeResult.imageWidth || facadeImageW"
+                :coord-height="(facadeResult as any).stitchedHeight || facadeResult.imageHeight || facadeImageH"
+                :crop-offset-x="(facadeResult as any).cropOffsetX || 0"
+                :crop-offset-y="(facadeResult as any).cropOffsetY || 0"
                 :detections="facadeResult.detections || []"
               />
             </section>
@@ -828,10 +832,6 @@
               v-if="facadeResult && (facadeResult.detections || []).length"
               class="facade-detection-panel"
             >
-              <div class="facade-detection-panel-head">
-                <span class="fdp-title">病害详细列表</span>
-                <span class="fdp-sub">位于诊断结果正下方，支持筛选与多格式导出</span>
-              </div>
               <FacadeProblemReport
                 fill
                 title="病害详细列表"
@@ -946,7 +946,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick, defineAsyncComponent } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { CircleClose, MagicStick, Crop, Search, ArrowUp, Setting } from '@element-plus/icons-vue'
 import { detectDisease, generateReport as apiGenerateReport, uploadFacadePanorama, analyzeFacade, calibrateBrickScale, manualScaleCalibration, exportFacadeCoords, getFacadeReport, getModels, getModelDefaults, api } from '../api'
@@ -963,8 +963,11 @@ import FacadeAutoPreview from '../components/FacadeAutoPreview.vue'
 import FacadeManualScaleSelector from '../components/FacadeManualScaleSelector.vue'
 import FacadeScaleFineTune from '../components/FacadeScaleFineTune.vue'
 import FacadeProblemReport from '../components/FacadeProblemReport.vue'
-import FacadeSeverityHeatmapPanel from '../components/FacadeSeverityHeatmapPanel.vue'
 import FacadeCoordDialog from '../components/FacadeCoordDialog.vue'
+
+const FacadeSeverityHeatmapPanel = defineAsyncComponent(
+  () => import('../components/FacadeSeverityHeatmapPanel.vue')
+)
 import { buildFacadeCoordText, downloadTextFile } from '../utils/facadeCoordExport'
 import { computeTileMetrics } from '../utils/facadeTileMetrics'
 
@@ -2858,23 +2861,8 @@ async function generateReport() {
   margin-top: 4px;
 }
 .facade-detection-panel {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-height: 320px;
-  background: #fff;
-  border-radius: 12px;
-  border: 1px solid #e4e7ed;
-  padding: 12px 14px 16px;
-  box-shadow: 0 4px 16px rgba(0, 112, 192, 0.06);
+  margin-top: 4px;
 }
-.facade-detection-panel-head {
-  margin-bottom: 10px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid #ebeef5;
-}
-.fdp-title { font-size: 15px; font-weight: 700; color: #003a66; display: block; }
-.fdp-sub { font-size: 12px; color: #909399; margin-top: 4px; display: block; }
 
 @media (max-width: 992px) {
   .facade-result-top { grid-template-columns: 1fr; min-height: 0; }

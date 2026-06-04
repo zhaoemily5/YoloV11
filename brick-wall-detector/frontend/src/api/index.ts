@@ -112,7 +112,6 @@ export interface Report {
     overallRisk: string
     weatheringArea: string
     efflorescenceArea: string
-    totalEstimatedCost: number
     recommendation: string
   }
   gridAnalysis: Array<{
@@ -129,9 +128,6 @@ export interface Report {
     count: number
     totalArea: number | null
     maxSeverity: string
-    estimatedCost: number
-    quantity: number
-    unit: string
     description: string
     severity: string
     repairMethod: string[]

@@ -31,3 +31,22 @@ Thumbs.db
 uploads/
 *.pid
 
+# ---------- 模型权重（体积大，本地或 LFS 管理） ----------
+*.pt
+*.onnx
+!brick-wall-detector/backend/models/.gitkeep
+
+# ---------- 本地工具与报告 ----------
+code_counter.py
+reports/
+
+# ---------- 子项目运行时数据 ----------
+brick-wall-detector/backend/uploads/
+brick-wall-detector/backend/data/facade-jobs/
+brick-wall-detector/backend/data/history.json
+brick-wall-detector/backend/data/logs.json
+brick-wall-detector/backend/data/users.json
+brick-wall-detector/backend/data/settings.json
+brick-wall-detector/logs/*.log
+brick-wall-detector/logs/*.pid
+

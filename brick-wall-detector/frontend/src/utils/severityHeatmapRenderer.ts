@@ -1,26 +1,33 @@
+/**
+ * 立面病害热力图：正射底图 + heatmap.js 点阵热力层 + Alpha 混合
+ */
+import h337 from '../vendor/heatmap.js'
+
 export interface SeverityDetection {
   class?: string
   severity?: string
   confidence?: number
+  areaM2?: number
   globalBbox?: number[]
   bbox?: number[]
   globalPolygon?: Array<{ x: number; y: number }>
 }
 
-export interface SeverityGrid {
-  gridId?: string
-  xM: number
-  yM: number
-  widthM: number
-  heightM: number
-  intensity: number
-  totalCount?: number
-}
+export type HeatmapWeightMode = 'confidence' | 'area' | 'severity'
 
 export interface SeverityHeatmapOptions {
   maxSide?: number
   overlayOpacity?: number
   pureBackground?: string
+  weightMode?: HeatmapWeightMode
+  radius?: number
+  /** 病害坐标所在区域宽（通常为 ROI / 拼合图宽，默认与底图一致） */
+  coordWidth?: number
+  /** 病害坐标所在区域高 */
+  coordHeight?: number
+  /** 从全景正射图裁切分析区的起点 X（像素） */
+  cropOffsetX?: number
+  cropOffsetY?: number
 }
 
 export interface SeverityHeatmapOutput {
@@ -28,19 +35,33 @@ export interface SeverityHeatmapOutput {
   overlay: HTMLCanvasElement
   width: number
   height: number
-  confMin: number
-  confMax: number
+  /** 原始权重（置信度/面积比/严重度） */
+  valueMin: number
+  valueMax: number
+  /** 送入 heatmap.js 的归一化权重 1–100 */
+  normMin: number
+  normMax: number
+  pointCount: number
+  radius: number
 }
 
-interface ConfPoint {
+interface HeatPoint {
   x: number
   y: number
-  confidence: number
+  value: number
 }
 
-const HEAT_DOWNSAMPLE = 6
+const HEATMAP_JS_GRADIENT: Record<string, string> = {
+  '0.0': 'rgba(0,0,255,0)',
+  '0.15': 'rgb(0,80,255)',
+  '0.35': 'rgb(0,200,255)',
+  '0.5': 'rgb(0,255,120)',
+  '0.65': 'rgb(255,255,0)',
+  '0.8': 'rgb(255,160,0)',
+  '0.92': 'rgb(255,60,0)',
+  '1.0': 'rgb(220,0,0)',
+}
 
-/** 温度分布色标：低置信度(蓝) → 高置信度(红)，线性插值 */
 export function heatColormap(t: number): [number, number, number] {
   const v = Math.max(0, Math.min(1, t))
   if (v < 0.25) {
@@ -65,132 +86,188 @@ function getBbox(det: SeverityDetection): [number, number, number, number] | nul
   return [b[0], b[1], b[2], b[3]]
 }
 
-function detectionCenter(det: SeverityDetection, scale: number): { x: number; y: number } | null {
+/** 后端 globalBbox 固定为 [x, y, w, h]（整墙/全景像素坐标） */
+function detectionCenter(
+  det: SeverityDetection,
+  scale: number,
+  coordW: number,
+  coordH: number,
+  cropOffsetX: number,
+  cropOffsetY: number
+): { x: number; y: number } | null {
   const poly = det.globalPolygon
   if (poly && poly.length >= 3) {
     let sx = 0
     let sy = 0
     poly.forEach(p => {
-      sx += p.x
-      sy += p.y
+      sx += p.x - cropOffsetX
+      sy += p.y - cropOffsetY
     })
-    return { x: (sx / poly.length) * scale, y: (sy / poly.length) * scale }
+    const cx = (sx / poly.length) * scale
+    const cy = (sy / poly.length) * scale
+    if (cx < -2 || cy < -2) return null
+    return { x: cx, y: cy }
   }
-  const bbox = getBbox(det)
-  if (!bbox) return null
-  const [bx, by, bw, bh] = bbox
-  return { x: (bx + bw / 2) * scale, y: (by + bh / 2) * scale }
+  const raw = getBbox(det)
+  if (!raw) return null
+  const [bx, by, bw, bh] = raw
+  if (bw <= 0 || bh <= 0) return null
+  const cx = (bx + bw / 2 - cropOffsetX) * scale
+  const cy = (by + bh / 2 - cropOffsetY) * scale
+  if (cx < -2 || cy < -2) return null
+  return { x: cx, y: cy }
 }
 
-function collectConfidencePoints(
+const SEVERITY_WEIGHT: Record<string, number> = {
+  轻度: 0.35,
+  中度: 0.55,
+  较重: 0.72,
+  严重: 0.88,
+  极严重: 1,
+}
+
+function computePointWeight(
+  det: SeverityDetection,
+  mode: HeatmapWeightMode,
+  areaMax: number
+): number {
+  const conf = Math.max(0, Math.min(1, det.confidence ?? 0.5))
+  if (mode === 'confidence') return conf
+  if (mode === 'severity') return SEVERITY_WEIGHT[det.severity || ''] ?? conf
+  if (det.areaM2 && det.areaM2 > 0 && areaMax > 0) {
+    return Math.max(0.05, Math.min(1, det.areaM2 / areaMax))
+  }
+  const bbox = getBbox(det)
+  if (bbox) {
+    const pxArea = bbox[2] * bbox[3]
+    return Math.max(0.05, Math.min(1, pxArea / 12000))
+  }
+  return conf
+}
+
+function collectHeatmapPoints(
   detections: SeverityDetection[],
   scale: number,
   w: number,
-  h: number
-): { points: ConfPoint[]; confMin: number; confMax: number } {
-  const points: ConfPoint[] = []
-  let confMin = Infinity
-  let confMax = -Infinity
+  h: number,
+  weightMode: HeatmapWeightMode,
+  coordW: number,
+  coordH: number,
+  cropOffsetX: number,
+  cropOffsetY: number
+): { points: HeatPoint[]; valueMin: number; valueMax: number; normMin: number; normMax: number } {
+  const areaMax = detections.reduce((m, d) => Math.max(m, d.areaM2 || 0), 0)
+  const points: HeatPoint[] = []
+  let valueMin = Infinity
+  let valueMax = -Infinity
 
   detections.forEach(det => {
-    const conf = Math.max(0, Math.min(1, det.confidence ?? 0))
-    const center = detectionCenter(det, scale)
-    if (!center || conf <= 0) return
-    if (center.x < 0 || center.y < 0 || center.x > w || center.y > h) return
-    points.push({ x: center.x, y: center.y, confidence: conf })
-    if (conf < confMin) confMin = conf
-    if (conf > confMax) confMax = conf
+    const center = detectionCenter(det, scale, coordW, coordH, cropOffsetX, cropOffsetY)
+    if (!center) return
+    const x = Math.max(0, Math.min(w - 1, Math.round(center.x)))
+    const y = Math.max(0, Math.min(h - 1, Math.round(center.y)))
+    const value = computePointWeight(det, weightMode, areaMax)
+    if (value <= 0) return
+    points.push({ x, y, value })
+    valueMin = Math.min(valueMin, value)
+    valueMax = Math.max(valueMax, value)
   })
 
-  if (!points.length) return { points: [], confMin: 0, confMax: 1 }
-  if (confMin === confMax) confMin = Math.max(0, confMax - 0.01)
-  return { points, confMin, confMax }
-}
-
-/** 线性平滑权重核：(1 - d/r)² */
-function buildLinearSmoothKernel(radius: number) {
-  const r = Math.ceil(radius)
-  const kernel: { dx: number; dy: number; w: number }[] = []
-  for (let dy = -r; dy <= r; dy++) {
-    for (let dx = -r; dx <= r; dx++) {
-      const d = Math.sqrt(dx * dx + dy * dy)
-      if (d > radius) continue
-      const w = (1 - d / radius) ** 2
-      if (w > 0.001) kernel.push({ dx, dy, w })
-    }
+  if (!points.length) {
+    return { points: [], valueMin: 0, valueMax: 1, normMin: 1, normMax: 100 }
   }
-  return kernel
+  if (valueMin === valueMax) valueMin = Math.max(0, valueMax - 0.01)
+  return { points, valueMin, valueMax, normMin: 1, normMax: 100 }
 }
 
-/**
- * 以各检测框中心为采样点，线性平滑权重做 IDW 插值
- */
-function buildInterpolatedField(
-  points: ConfPoint[],
-  fw: number,
-  fh: number,
-  downsample: number,
-  influenceRadius: number
-): { values: Float32Array; weights: Float32Array } {
-  const valueField = new Float32Array(fw * fh)
-  const weightField = new Float32Array(fw * fh)
-  if (!points.length) return { values: valueField, weights: weightField }
+/** 将权重线性拉伸到 1–100，增强三种权重模式的可视差异 */
+function normalizePointsForHeatmap(
+  points: HeatPoint[],
+  valueMin: number,
+  valueMax: number
+): HeatPoint[] {
+  const span = valueMax - valueMin || 1
+  return points.map(p => ({
+    x: p.x,
+    y: p.y,
+    value: Math.max(1, Math.round(((p.value - valueMin) / span) * 100)),
+  }))
+}
 
-  const radius = influenceRadius / downsample
-  const kernel = buildLinearSmoothKernel(radius)
+function defaultHeatRadius(w: number, h: number): number {
+  return Math.max(20, Math.min(120, Math.round(Math.min(w, h) * 0.028)))
+}
 
-  points.forEach(pt => {
-    const ix = Math.round(pt.x / downsample)
-    const iy = Math.round(pt.y / downsample)
-    kernel.forEach(({ dx, dy, w }) => {
-      const nx = ix + dx
-      const ny = iy + dy
-      if (nx < 0 || ny < 0 || nx >= fw || ny >= fh) return
-      const idx = ny * fw + nx
-      weightField[idx] += w
-      valueField[idx] += w * pt.confidence
+/** 根据输出画布尺寸给出半径滑动条范围（供 UI 使用） */
+export function getHeatRadiusRange(imageWidth = 2048, imageHeight = 2048, maxSide = 4096) {
+  let w = imageWidth
+  let h = imageHeight
+  if (Math.max(w, h) > maxSide) {
+    const s = maxSide / Math.max(w, h)
+    w = Math.round(w * s)
+    h = Math.round(h * s)
+  }
+  const shortSide = Math.min(w, h)
+  const auto = defaultHeatRadius(w, h)
+  const min = 4
+  const max = Math.max(96, Math.min(600, Math.round(shortSide * 0.15)))
+  const suggested = Math.max(min, Math.min(max, Math.round(auto * 0.25)))
+  return { min, max, auto, suggested }
+}
+
+function renderHeatmapLayerWithLibrary(
+  w: number,
+  h: number,
+  points: HeatPoint[],
+  valueMin: number,
+  valueMax: number,
+  radius: number
+): HTMLCanvasElement {
+  const container = document.createElement('div')
+  container.style.cssText = [
+    'position:fixed',
+    'left:0',
+    'top:0',
+    `width:${w}px`,
+    `height:${h}px`,
+    'opacity:0',
+    'pointer-events:none',
+    'z-index:-9999',
+    'overflow:hidden',
+  ].join(';')
+  document.body.appendChild(container)
+
+  try {
+    const instance = h337.create({
+      container,
+      width: w,
+      height: h,
+      radius,
+      maxOpacity: 0.9,
+      minOpacity: 0.08,
+      blur: 0.88,
+      gradient: HEATMAP_JS_GRADIENT,
     })
-  })
 
-  const values = new Float32Array(fw * fh)
-  for (let i = 0; i < values.length; i++) {
-    values[i] = weightField[i] > 1e-5 ? valueField[i] / weightField[i] : 0
+    const normalized = normalizePointsForHeatmap(points, valueMin, valueMax)
+    instance.setData({ max: 100, min: 1, data: normalized })
+    instance.repaint()
+
+    const srcCanvas = container.querySelector('canvas')
+    if (!srcCanvas) {
+      throw new Error('heatmap.js 未创建画布')
+    }
+
+    const out = document.createElement('canvas')
+    out.width = w
+    out.height = h
+    const ctx = out.getContext('2d')
+    if (!ctx) throw new Error('无法创建 Canvas 2D 上下文')
+    ctx.drawImage(srcCanvas, 0, 0, w, h)
+    return out
+  } finally {
+    if (container.parentNode) document.body.removeChild(container)
   }
-  return { values, weights: weightField }
-}
-
-function blurScalarField(values: Float32Array, fw: number, fh: number, blurPx: number): Float32Array {
-  const src = document.createElement('canvas')
-  src.width = fw
-  src.height = fh
-  const sctx = src.getContext('2d')!
-  const img = sctx.createImageData(fw, fh)
-  let maxV = 0
-  for (let i = 0; i < values.length; i++) {
-    const v = Math.round(values[i] * 255)
-    if (v > maxV) maxV = v
-    const idx = i * 4
-    img.data[idx] = v
-    img.data[idx + 1] = v
-    img.data[idx + 2] = v
-    img.data[idx + 3] = v > 0 ? 255 : 0
-  }
-  sctx.putImageData(img, 0, 0)
-
-  const dst = document.createElement('canvas')
-  dst.width = fw
-  dst.height = fh
-  const dctx = dst.getContext('2d')!
-  dctx.filter = `blur(${blurPx}px)`
-  dctx.drawImage(src, 0, 0)
-  dctx.filter = 'none'
-
-  const blurred = dctx.getImageData(0, 0, fw, fh)
-  const out = new Float32Array(fw * fh)
-  for (let i = 0; i < out.length; i++) {
-    out[i] = blurred.data[i * 4] / 255
-  }
-  return out
 }
 
 function parseBgColor(bg: string): [number, number, number] {
@@ -204,57 +281,39 @@ function parseBgColor(bg: string): [number, number, number] {
   return [13, 17, 23]
 }
 
-function fieldToColorCanvas(
-  values: Float32Array,
-  weights: Float32Array,
-  fw: number,
-  fh: number,
-  confMin: number,
-  confMax: number,
-  background: string | null
+function composePureHeatmap(
+  heatLayer: HTMLCanvasElement,
+  w: number,
+  h: number,
+  background: string
 ): HTMLCanvasElement {
-  const canvas = document.createElement('canvas')
-  canvas.width = fw
-  canvas.height = fh
-  const ctx = canvas.getContext('2d')!
-  const img = ctx.createImageData(fw, fh)
-  const range = Math.max(confMax - confMin, 1e-6)
-
-  for (let i = 0; i < values.length; i++) {
-    const idx = i * 4
-    if (weights[i] < 0.015) {
-      if (background) {
-        const [r, g, b] = parseBgColor(background)
-        img.data[idx] = r
-        img.data[idx + 1] = g
-        img.data[idx + 2] = b
-        img.data[idx + 3] = 255
-      } else {
-        img.data[idx + 3] = 0
-      }
-      continue
-    }
-    const t = Math.max(0, Math.min(1, (values[i] - confMin) / range))
-    const [r, g, b] = heatColormap(t)
-    const alpha = Math.round(40 + t * 200)
-    img.data[idx] = r
-    img.data[idx + 1] = g
-    img.data[idx + 2] = b
-    img.data[idx + 3] = alpha
-  }
-
-  ctx.putImageData(img, 0, 0)
-  return canvas
-}
-
-function upscaleCanvas(small: HTMLCanvasElement, w: number, h: number): HTMLCanvasElement {
   const out = document.createElement('canvas')
   out.width = w
   out.height = h
   const ctx = out.getContext('2d')!
-  ctx.imageSmoothingEnabled = true
-  ctx.imageSmoothingQuality = 'high'
-  ctx.drawImage(small, 0, 0, small.width, small.height, 0, 0, w, h)
+  const [r, g, b] = parseBgColor(background)
+  ctx.fillStyle = `rgb(${r},${g},${b})`
+  ctx.fillRect(0, 0, w, h)
+  ctx.drawImage(heatLayer, 0, 0)
+  return out
+}
+
+function composeOverlay(
+  baseImage: HTMLImageElement,
+  heatLayer: HTMLCanvasElement,
+  w: number,
+  h: number,
+  opacity: number,
+  crop: { x: number; y: number; sw: number; sh: number }
+): HTMLCanvasElement {
+  const out = document.createElement('canvas')
+  out.width = w
+  out.height = h
+  const ctx = out.getContext('2d')!
+  ctx.drawImage(baseImage, crop.x, crop.y, crop.sw, crop.sh, 0, 0, w, h)
+  ctx.globalAlpha = opacity
+  ctx.drawImage(heatLayer, 0, 0, w, h)
+  ctx.globalAlpha = 1
   return out
 }
 
@@ -264,8 +323,9 @@ function drawColorLegend(
   y: number,
   barW: number,
   barH: number,
-  confMin: number,
-  confMax: number
+  valueMin: number,
+  valueMax: number,
+  label: string
 ) {
   const grad = ctx.createLinearGradient(x, y, x + barW, y)
   ;[0, 0.25, 0.5, 0.75, 1].forEach(t => {
@@ -276,7 +336,7 @@ function drawColorLegend(
   ctx.fillRect(x - 8, y - 28, barW + 16, barH + 44)
   ctx.fillStyle = '#303133'
   ctx.font = 'bold 12px "Microsoft YaHei", sans-serif'
-  ctx.fillText('置信度热力（线性插值）', x, y - 10)
+  ctx.fillText(label, x, y - 10)
   ctx.fillStyle = grad
   ctx.fillRect(x, y, barW, barH)
   ctx.strokeStyle = '#909399'
@@ -285,13 +345,18 @@ function drawColorLegend(
   ctx.fillStyle = '#606266'
   ctx.font = '10px "Microsoft YaHei", sans-serif'
   ctx.textAlign = 'left'
-  ctx.fillText(`${(confMin * 100).toFixed(1)}%`, x, y + barH + 14)
+  ctx.fillText(valueMin.toFixed(0), x, y + barH + 14)
   ctx.textAlign = 'right'
-  ctx.fillText(`${(confMax * 100).toFixed(1)}%`, x + barW, y + barH + 14)
+  ctx.fillText(valueMax.toFixed(0), x + barW, y + barH + 14)
   ctx.textAlign = 'left'
 }
 
-function attachLegend(canvas: HTMLCanvasElement, confMin: number, confMax: number): HTMLCanvasElement {
+function attachLegend(
+  canvas: HTMLCanvasElement,
+  valueMin: number,
+  valueMax: number,
+  label: string
+): HTMLCanvasElement {
   const w = canvas.width
   const h = canvas.height
   const out = document.createElement('canvas')
@@ -299,40 +364,35 @@ function attachLegend(canvas: HTMLCanvasElement, confMin: number, confMax: numbe
   out.height = h
   const ctx = out.getContext('2d')!
   ctx.drawImage(canvas, 0, 0)
-  drawColorLegend(ctx, 14, h - 52, Math.min(260, w * 0.34), 12, confMin, confMax)
+  drawColorLegend(ctx, 14, h - 52, Math.min(260, w * 0.34), 12, valueMin, valueMax, label)
   return out
 }
 
-function composeOverlay(
-  image: HTMLImageElement,
-  heatCanvas: HTMLCanvasElement,
-  w: number,
-  h: number,
-  opacity: number
-): HTMLCanvasElement {
-  const out = document.createElement('canvas')
-  out.width = w
-  out.height = h
-  const ctx = out.getContext('2d')!
-  ctx.drawImage(image, 0, 0, w, h)
-  ctx.globalAlpha = opacity
-  ctx.drawImage(heatCanvas, 0, 0)
-  ctx.globalAlpha = 1
-  return out
-}
-
-/**
- * 生成纯热力图 + 原图叠加图
- * 以各检测区域中心为置信度采样点，线性平滑 IDW 插值，色标按置信度 min/max 标定
- */
 export function renderSeverityHeatmaps(
   image: HTMLImageElement,
   detections: SeverityDetection[],
   options: SeverityHeatmapOptions = {}
 ): SeverityHeatmapOutput {
-  const maxSide = options.maxSide ?? 8192
-  let w = image.naturalWidth || image.width
-  let h = image.naturalHeight || image.height
+  const maxSide = options.maxSide ?? 4096
+  const overlayOpacity = options.overlayOpacity ?? 0.5
+  const pureBg = options.pureBackground ?? '#0d1117'
+  const weightMode = options.weightMode ?? 'confidence'
+
+  const srcW = image.naturalWidth || image.width
+  const srcH = image.naturalHeight || image.height
+  if (!srcW || !srcH) {
+    throw new Error('底图尺寸无效')
+  }
+
+  const coordW = options.coordWidth ?? srcW
+  const coordH = options.coordHeight ?? srcH
+  const cropX = Math.max(0, options.cropOffsetX ?? 0)
+  const cropY = Math.max(0, options.cropOffsetY ?? 0)
+  const cropSw = Math.min(coordW, Math.max(1, srcW - cropX))
+  const cropSh = Math.min(coordH, Math.max(1, srcH - cropY))
+
+  let w = coordW
+  let h = coordH
   let scale = 1
   if (Math.max(w, h) > maxSide) {
     scale = maxSide / Math.max(w, h)
@@ -340,31 +400,64 @@ export function renderSeverityHeatmaps(
     h = Math.round(h * scale)
   }
 
-  const pureBg = options.pureBackground ?? '#0d1117'
-  const overlayOpacity = options.overlayOpacity ?? 0.68
-  const ds = HEAT_DOWNSAMPLE
-  const fw = Math.ceil(w / ds)
-  const fh = Math.ceil(h / ds)
-  const minSide = Math.min(w, h)
-  const influenceRadius = Math.max(40, Math.min(320, minSide * 0.09))
-  const blurPx = Math.max(3, Math.min(14, minSide / ds / 80))
+  const { points, valueMin, valueMax, normMin, normMax } = collectHeatmapPoints(
+    detections,
+    scale,
+    w,
+    h,
+    weightMode,
+    coordW,
+    coordH,
+    cropX,
+    cropY
+  )
 
-  const { points, confMin, confMax } = collectConfidencePoints(detections, scale, w, h)
-  const { values, weights } = buildInterpolatedField(points, fw, fh, ds, influenceRadius)
-  const smoothed = blurScalarField(values, fw, fh, blurPx)
-  const smoothedWeights = blurScalarField(weights, fw, fh, blurPx)
+  if (!points.length) {
+    throw new Error(`没有有效的病害坐标点（检测 ${detections.length} 条）`)
+  }
 
-  const smallPure = fieldToColorCanvas(smoothed, smoothedWeights, fw, fh, confMin, confMax, pureBg)
-  const smallHeat = fieldToColorCanvas(smoothed, smoothedWeights, fw, fh, confMin, confMax, null)
+  const radius = options.radius ?? defaultHeatRadius(w, h)
+  const heatLayer = renderHeatmapLayerWithLibrary(w, h, points, valueMin, valueMax, radius)
 
-  const pure = attachLegend(upscaleCanvas(smallPure, w, h), confMin, confMax)
-  const heatLayer = upscaleCanvas(smallHeat, w, h)
-  const overlay = attachLegend(composeOverlay(image, heatLayer, w, h, overlayOpacity), confMin, confMax)
+  const weightLabel =
+    weightMode === 'confidence'
+      ? '相对权重·置信度（归一化）'
+      : weightMode === 'area'
+        ? '相对权重·面积（归一化）'
+        : '相对权重·严重程度（归一化）'
 
-  return { pure, overlay, width: w, height: h, confMin, confMax }
+  const pure = attachLegend(composePureHeatmap(heatLayer, w, h, pureBg), normMin, normMax, weightLabel)
+  const overlay = attachLegend(
+    composeOverlay(image, heatLayer, w, h, overlayOpacity, {
+      x: cropX,
+      y: cropY,
+      sw: cropSw,
+      sh: cropSh,
+    }),
+    normMin,
+    normMax,
+    weightLabel
+  )
+
+  return {
+    pure,
+    overlay,
+    width: w,
+    height: h,
+    valueMin,
+    valueMax,
+    normMin,
+    normMax,
+    pointCount: points.length,
+    radius,
+  }
 }
 
-export function canvasToBlob(canvas: HTMLCanvasElement, type = 'image/png', quality = 0.92): Promise<Blob> {
+export function canvasToBlob(
+  canvas: HTMLCanvasElement,
+  type = 'image/png',
+  quality = 0.92
+): Promise<Blob> {
   return new Promise((resolve, reject) => {
     canvas.toBlob(b => (b ? resolve(b) : reject(new Error('导出图片失败'))), type, quality)
   })

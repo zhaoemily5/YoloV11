@@ -728,14 +728,7 @@ app.get('/api/detect/:jobId/status', (req, res) => {
   });
 });
 
-// 工程量单价估算（元/m² 或 元/处）
-const REPAIR_UNIT_COSTS = {
-  '风化': { unit: 'm²', lightCost: 80, mediumCost: 150, severeCost: 280 },
-  '泛碱': { unit: 'm²', lightCost: 60, mediumCost: 120, severeCost: 200 },
-  '裂缝': { unit: '处', lightCost: 50, mediumCost: 150, severeCost: 350 },
-  '植物附着': { unit: '处', lightCost: 100, mediumCost: 250, severeCost: 500 },
-  '缺损': { unit: '处', lightCost: 80, mediumCost: 200, severeCost: 400 }
-};
+// 单图 / 整墙报告仅输出检测与统计确定项，不含费用估算
 
 app.post('/api/report/generate', (req, res) => {
   try {
@@ -774,7 +767,6 @@ app.post('/api/report/generate', (req, res) => {
     allDiseases.forEach(disease => {
       const data = summary[disease];
       const recommendation = REPAIR_RECOMMENDATIONS[disease];
-      const unitCost = REPAIR_UNIT_COSTS[disease];
 
       diseaseDetails.push({
         name: disease,
@@ -783,9 +775,6 @@ app.post('/api/report/generate', (req, res) => {
         count: data ? data.count : 0,
         totalArea: data ? (data.totalArea || null) : null,
         maxSeverity: data ? data.maxSeverity : '-',
-        estimatedCost: null,
-        quantity: data ? (unitCost.unit === 'm²' ? data.totalArea : data.count) : 0,
-        unit: unitCost.unit,
         ...recommendation
       });
     });
@@ -811,7 +800,6 @@ app.post('/api/report/generate', (req, res) => {
         overallRisk,
         weatheringArea: weatheringArea.toFixed(2),
         efflorescenceArea: efflorescenceArea.toFixed(2),
-        totalEstimatedCost: null,
         recommendation: overallRisk === '高风险'
           ? '建议立即开展修缮工作，优先处理严重病害区域'
           : overallRisk === '中风险'
@@ -966,8 +954,7 @@ ${diseaseList}
 1. 修缮优先级排序及理由
 2. 每种病害的具体修缮工艺步骤
 3. 推荐使用的材料及规格
-4. 施工注意事项
-5. 预计工期估算`;
+4. 施工注意事项与顺序建议`;
         break;
 
       case 'prevention':
@@ -2076,6 +2063,8 @@ app.post('/api/facade/analyze/:jobId', async (req, res) => {
         totalTiles: tiles.length, failedTiles, totalDetections: detections.length,
         stitchedImageUrl: stitchResult ? `${stitchResult.url}?v=${rv}` : null,
         stitchedWidth: stitchResult ? stitchedW : null, stitchedHeight: stitchResult ? stitchedH : null,
+        cropOffsetX: cropOffX,
+        cropOffsetY: cropOffY,
         grids, detections, summary, tiles: publicTiles,
         cancelled: !!j.cancelled
       };
@@ -2148,49 +2137,49 @@ app.post('/api/facade/cancel/:jobId', (req, res) => {
   }
 });
 
-function pxToCm(px, scalePxPerMm) {
+function pxToM(px, scalePxPerMm) {
   if (!scalePxPerMm || scalePxPerMm <= 0) return 0;
-  return px / scalePxPerMm / 10;
+  return px / scalePxPerMm / 1000;
 }
 
-function pixelPointToWallCm(px, py, scalePxPerMm, imageHeight) {
+function pixelPointToWallM(px, py, scalePxPerMm, imageHeight) {
   return {
-    xCm: pxToCm(px, scalePxPerMm),
-    yCm: pxToCm(imageHeight - py, scalePxPerMm),
+    xM: pxToM(px, scalePxPerMm),
+    yM: pxToM(imageHeight - py, scalePxPerMm),
   };
 }
 
-function pixelBboxToRealCm(x1, y1, x2, y2, scalePxPerMm, imageHeight) {
-  const bottomLeft = pixelPointToWallCm(x1, y2, scalePxPerMm, imageHeight);
-  const topRight = pixelPointToWallCm(x2, y1, scalePxPerMm, imageHeight);
-  const center = pixelPointToWallCm((x1 + x2) / 2, (y1 + y2) / 2, scalePxPerMm, imageHeight);
+function pixelBboxToRealM(x1, y1, x2, y2, scalePxPerMm, imageHeight) {
+  const bottomLeft = pixelPointToWallM(x1, y2, scalePxPerMm, imageHeight);
+  const topRight = pixelPointToWallM(x2, y1, scalePxPerMm, imageHeight);
+  const center = pixelPointToWallM((x1 + x2) / 2, (y1 + y2) / 2, scalePxPerMm, imageHeight);
   return {
     bottomLeft,
     topRight,
     center,
-    widthCm: Math.abs(topRight.xCm - bottomLeft.xCm),
-    heightCm: Math.abs(topRight.yCm - bottomLeft.yCm),
+    widthM: Math.abs(topRight.xM - bottomLeft.xM),
+    heightM: Math.abs(topRight.yM - bottomLeft.yM),
   };
 }
 
 function formatWallPoint(p) {
-  const f = (n) => Number(n).toFixed(1);
-  return `X=${f(p.xCm)}, Y=${f(p.yCm)}`;
+  const f = (n) => Number(n).toFixed(3);
+  return `X=${f(p.xM)}, Y=${f(p.yM)}`;
 }
 
 function formatRealBboxLine(real) {
-  const f = (n) => Number(n).toFixed(1);
+  const f = (n) => Number(n).toFixed(3);
   return (
-    `墙面坐标(cm): 左下角(${formatWallPoint(real.bottomLeft)}) ` +
+    `墙面坐标(m): 左下角(${formatWallPoint(real.bottomLeft)}) ` +
     `右上角(${formatWallPoint(real.topRight)}) ` +
     `中心(${formatWallPoint(real.center)}) ` +
-    `宽×高 ${f(real.widthCm)}×${f(real.heightCm)} cm`
+    `宽×高 ${f(real.widthM)}×${f(real.heightM)} m`
   );
 }
 
 const WALL_COORD_HEADER = [
-  '墙面坐标系：原点在图片左下角 (0,0)，X 轴向右，Y 轴向上，单位 cm',
-  '换算: X(cm)=像素x÷比例尺÷10；Y(cm)=(图像高度−像素y)÷比例尺÷10',
+  '墙面坐标系：原点在图片左下角 (0,0)，X 轴向右，Y 轴向上，单位 m',
+  '换算: X(m)=像素x÷比例尺÷1000；Y(m)=(图像高度−像素y)÷比例尺÷1000',
   '图像像素坐标：原点在图片左上角，仅作对照参考',
 ];
 
@@ -2227,7 +2216,7 @@ app.get('/api/facade/export-coords/:jobId', (req, res) => {
       );
     } else {
       coordLines.push(
-        '比例尺: 未标定（无法换算墙面坐标 cm）',
+        '比例尺: 未标定（无法换算墙面坐标 m）',
         ...WALL_COORD_HEADER
       );
     }
@@ -2270,7 +2259,7 @@ app.get('/api/facade/export-coords/:jobId', (req, res) => {
         const tileId = det.tileId || '';
         let coordPart = '';
         if (hasScale) {
-          const real = pixelBboxToRealCm(x1, y1, x2, y2, scalePxPerMm, imageHeight);
+          const real = pixelBboxToRealM(x1, y1, x2, y2, scalePxPerMm, imageHeight);
           coordPart =
             ` | ${formatRealBboxLine(real)}` +
             ` | 像素对照: (${Math.round(x1)},${Math.round(y1)})→(${Math.round(x2)},${Math.round(y2)}) [图像原点左上]`;
@@ -2500,7 +2489,6 @@ app.get('/api/facade/report/:jobId', (req, res) => {
     const diseaseDetails = ['风化', '泛碱', '裂缝', '植物附着', '缺损'].map(name => {
       const count = summary.diseaseStats[name] || 0;
       const recommendation = REPAIR_RECOMMENDATIONS[name] || {};
-      const unitCost = REPAIR_UNIT_COSTS[name] || { unit: 'm²', lightCost: 0, mediumCost: 0, severeCost: 0 };
       const classDets = detections.filter(d => d.class === name);
       const totalArea = classDets.reduce((sum, d) => sum + (d.areaM2 || 0), 0);
       const severityOrder = { '轻度': 1, '中度': 2, '重度': 3 };
@@ -2509,12 +2497,6 @@ app.get('/api/facade/report/:jobId', (req, res) => {
         const s = d.severity || '轻度';
         if (maxSeverity === '—' || (severityOrder[s] || 0) > (severityOrder[maxSeverity] || 0)) maxSeverity = s;
       });
-      let estimatedCost = 0;
-      if (unitCost.unit === 'm²') {
-        estimatedCost = Math.round(totalArea * (unitCost.mediumCost || 0));
-      } else {
-        estimatedCost = Math.round(count * (unitCost.mediumCost || 0));
-      }
       return {
         name,
         color: DISEASE_COLORS[name],
@@ -2522,13 +2504,9 @@ app.get('/api/facade/report/:jobId', (req, res) => {
         count,
         totalArea: Number(totalArea.toFixed(3)),
         maxSeverity: count > 0 ? maxSeverity : '—',
-        unit: unitCost.unit,
-        estimatedCost,
         ...recommendation
       };
     });
-
-    const totalEstimatedCost = diseaseDetails.reduce((s, d) => s + d.estimatedCost, 0);
     const totalDiseaseTypes = diseaseDetails.filter(d => d.detected).length;
 
     const repairPlan = {
@@ -2561,7 +2539,6 @@ app.get('/api/facade/report/:jobId', (req, res) => {
           highRiskGridCount: summary.highRiskGridCount,
           damageRatio: Number((damageRatio * 100).toFixed(2)),
           overallRisk,
-          totalEstimatedCost,
           recommendation: overallRisk === '高风险'
             ? '建议立即开展整墙修缮，优先处理高风险网格'
             : overallRisk === '中风险'

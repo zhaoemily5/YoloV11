@@ -25,7 +25,7 @@
         show-icon
         class="fcd-sys-alert"
         title="未完成比例尺标定"
-        description="仅显示图像像素坐标；标定后可输出以左下角为原点、X 向右、Y 向上的墙面坐标 (cm)。"
+        description="仅显示图像像素坐标；标定后可输出以左下角为原点、X 向右、Y 向上的墙面坐标 (m)。"
       />
 
       <div class="fcd-toolbar">
@@ -57,15 +57,15 @@
         </el-table-column>
         <el-table-column prop="severity" label="程度" width="70" />
         <template v-if="hasRealCoord">
-          <el-table-column label="中心 X (cm)" width="100" align="right">
-            <template #default="{ row }">{{ row.xCm }}</template>
+          <el-table-column label="中心 X (m)" width="100" align="right">
+            <template #default="{ row }">{{ row.xM }}</template>
           </el-table-column>
-          <el-table-column label="中心 Y (cm)" width="100" align="right">
-            <template #default="{ row }">{{ row.yCm }}</template>
+          <el-table-column label="中心 Y (m)" width="100" align="right">
+            <template #default="{ row }">{{ row.yM }}</template>
           </el-table-column>
-          <el-table-column label="范围 X / Y (cm)" min-width="200">
+          <el-table-column label="范围 X / Y (m)" min-width="200">
             <template #default="{ row }">
-              X: {{ row.xMinCm }} ~ {{ row.xMaxCm }} · Y: {{ row.yMinCm }} ~ {{ row.yMaxCm }}
+              X: {{ row.xMinM }} ~ {{ row.xMaxM }} · Y: {{ row.yMinM }} ~ {{ row.yMaxM }}
             </template>
           </el-table-column>
         </template>

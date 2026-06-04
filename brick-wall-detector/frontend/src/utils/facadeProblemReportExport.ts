@@ -2,7 +2,7 @@ import {
   formatRealBboxLine,
   formatWallPoint,
   hasValidCoordTransform,
-  pixelBboxToRealCm,
+  pixelBboxToRealM,
 } from './facadeCoordTransform'
 
 export interface ProblemReportMeta {
@@ -32,7 +32,7 @@ function formatDetectionBlock(det: any, index: number, meta?: ProblemReportMeta)
     `[${index}] ${det.class || '未知'} · ${det.severity || '—'} · 置信度 ${((det.confidence || 0) * 100).toFixed(1)}%`,
   ]
   if (hasValidCoordTransform(meta)) {
-    const real = pixelBboxToRealCm(x1, y1, x2, y2, {
+    const real = pixelBboxToRealM(x1, y1, x2, y2, {
       scalePxPerMm: meta!.scalePxPerMm!,
       imageHeight: meta!.imageHeight!,
     })
@@ -140,11 +140,11 @@ export function buildProblemReportHtml(input: ProblemReportInput): string {
     const y2 = y1 + (bbox[3] || 0)
     let coordHtml = `像素: (${Math.round(x1)}, ${Math.round(y1)}) → (${Math.round(x2)}, ${Math.round(y2)})`
     if (hasValidCoordTransform(meta)) {
-      const real = pixelBboxToRealCm(x1, y1, x2, y2, {
+      const real = pixelBboxToRealM(x1, y1, x2, y2, {
         scalePxPerMm: meta!.scalePxPerMm!,
         imageHeight: meta!.imageHeight!,
       })
-      coordHtml = `墙面(cm)[左下原点,X→,Y↑]: 中心(${formatWallPoint(real.center)}) · ${coordHtml}`
+      coordHtml = `墙面(m)[左下原点,X→,Y↑]: 中心(${formatWallPoint(real.center)}) · ${coordHtml}`
     }
     return `<div style="margin-bottom:10px;padding:10px;border:1px solid #e4e7ed;border-radius:6px;">
       <b>${i + 1}. ${d.class || '未知'}</b> — ${d.severity || '—'} — 置信度 ${((d.confidence || 0) * 100).toFixed(1)}%<br/>

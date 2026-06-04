@@ -70,15 +70,6 @@
           </div>
         </div>
 
-        <!-- 修缮费用：功能待开发 -->
-        <div class="assess-card ac-gold cost-card cost-pending">
-          <div class="ac-icon"><el-icon :size="22"><Coin /></el-icon></div>
-          <div class="ac-body">
-            <div class="ac-val pending-val">功能待开发</div>
-            <div class="ac-lbl">修缮费用估算</div>
-          </div>
-        </div>
-
         <div class="risk-banner" :class="riskClass">
           <div class="risk-left">
             <span class="risk-label">综合风险等级</span>
@@ -131,10 +122,6 @@
             <div class="dd-field">
               <span class="dd-fl">预防措施</span>
               <span class="dd-fv">{{ d.preventionMeasures }}</span>
-            </div>
-            <div v-if="d.detected" class="dd-field dd-cost">
-              <span class="dd-fl">费用估算</span>
-              <span class="dd-fv pending-inline">功能待开发</span>
             </div>
           </div>
         </div>
@@ -207,8 +194,6 @@ const allRepairItems = computed(() => {
 })
 
 function fmtDate(iso: string) { return iso ? new Date(iso).toLocaleString('zh-CN') : '-' }
-function printReport() { window.print() }
-function formatCost(cost: number) { return cost >= 10000 ? (cost / 10000).toFixed(1) + '万' : cost.toLocaleString() }
 
 // ==================== Export ====================
 function filename(ext: string) {
@@ -301,9 +286,6 @@ function exportJson() {
       count: d.count,
       totalArea: d.totalArea,
       maxSeverity: d.maxSeverity,
-      estimatedCost: d.estimatedCost,
-      quantity: d.quantity,
-      unit: d.unit
     })),
     repairPriority: {
       urgent: r.repairPlan.urgentItems.map((it: any) => it.name),
@@ -338,7 +320,6 @@ function exportMarkdown() {
   lines.push(`| 风化面积 | ${a.weatheringArea} m² |`)
   lines.push(`| 泛碱面积 | ${a.efflorescenceArea} m² |`)
   lines.push(`| 综合风险 | **${a.overallRisk}** |`)
-  lines.push(`| 修缮费用初估 | 功能待开发 |`)
   lines.push('')
   lines.push(`> ${a.recommendation}`)
   lines.push('')
@@ -555,22 +536,7 @@ function exportWord() {
 .repair-list li { margin-bottom:8px; font-size:14px; color:#444; line-height:1.7; }
 .no-repair { color:#888; text-align:center; padding:16px; font-size:14px; }
 
-/* Cost card */
-.ac-gold { background:linear-gradient(135deg,#d97706,#fbbf24); }
-.cost-card { grid-column:span 4; }
-.cost-val { color:#d97706; font-weight:700; }
-.cost-val small { color:#888; font-weight:400; }
-.dd-cost { background:#fffbeb; border-radius:8px; padding:10px 12px !important; margin-top:8px; }
-/* 功能待开发 */
-.cost-pending .ac-val.pending-val {
-  font-size:14px; font-weight:600; letter-spacing:.5px; opacity:.9;
-}
-.pending-inline {
-  color:#b45309; background:#fef3c7; border:1px solid #fde68a;
-  padding:2px 10px; border-radius:6px; font-size:12px; font-weight:600;
-}
-
-/* Professional note */
+/* Grid analysis */
 .professional-note {
   display:flex; align-items:center; gap:8px; margin-top:16px;
   padding:12px 16px; background:#f0f9ff; border:1px solid #bae6fd;
@@ -604,7 +570,6 @@ function exportWord() {
 /* Tablet */
 @media (max-width:992px) {
   .assessment-grid { grid-template-columns:repeat(2, 1fr); }
-  .cost-card { grid-column:span 2; }
   .rpt-top { flex-direction:column; align-items:flex-start; gap:12px; }
 }
 

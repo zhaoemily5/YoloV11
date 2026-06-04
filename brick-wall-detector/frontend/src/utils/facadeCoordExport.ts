@@ -3,7 +3,7 @@ import {
   formatCoordSystemHeaderLines,
   formatRealBboxLine,
   hasValidCoordTransform,
-  pixelBboxToRealCm,
+  pixelBboxToRealM,
   PIXEL_COORD_SYSTEM_DESC,
   WALL_COORD_SYSTEM_DESC,
 } from './facadeCoordTransform'
@@ -67,7 +67,7 @@ export function buildFacadeCoordText(
       ...formatCoordSystemHeaderLines()
     )
   } else {
-    lines.push('比例尺: 未标定（无法换算墙面坐标 cm）', WALL_COORD_SYSTEM_DESC, PIXEL_COORD_SYSTEM_DESC)
+    lines.push('比例尺: 未标定（无法换算墙面坐标 m）', WALL_COORD_SYSTEM_DESC, PIXEL_COORD_SYSTEM_DESC)
   }
 
   lines.push(
@@ -93,7 +93,7 @@ export function buildFacadeCoordText(
       const { x1, y1, x2, y2 } = bboxCorners(det.globalBbox || det.bbox)
       let coordPart = ''
       if (transform) {
-        const real = pixelBboxToRealCm(x1, y1, x2, y2, transform)
+        const real = pixelBboxToRealM(x1, y1, x2, y2, transform)
         coordPart =
           ` | ${formatRealBboxLine(real)}` +
           ` | 像素对照: (${Math.round(x1)},${Math.round(y1)})→(${Math.round(x2)},${Math.round(y2)}) [图像原点左上]`
@@ -181,19 +181,19 @@ export function detectionTableRows(detections: any[], meta: FacadeCoordMeta = {}
       hasRealCoord: !!transform,
     }
     if (transform) {
-      const real = pixelBboxToRealCm(x1, y1, x2, y2, transform)
-      row.xCm = Number(real.center.xCm.toFixed(1))
-      row.yCm = Number(real.center.yCm.toFixed(1))
-      row.xMinCm = Number(real.bottomLeft.xCm.toFixed(1))
-      row.yMinCm = Number(real.bottomLeft.yCm.toFixed(1))
-      row.xMaxCm = Number(real.topRight.xCm.toFixed(1))
-      row.yMaxCm = Number(real.topRight.yCm.toFixed(1))
-      row.centerXCm = row.xCm
-      row.centerYCm = row.yCm
-      row.x1Cm = row.xMinCm
-      row.y1Cm = row.yMinCm
-      row.x2Cm = row.xMaxCm
-      row.y2Cm = row.yMaxCm
+      const real = pixelBboxToRealM(x1, y1, x2, y2, transform)
+      row.xM = Number(real.center.xM.toFixed(3))
+      row.yM = Number(real.center.yM.toFixed(3))
+      row.xMinM = Number(real.bottomLeft.xM.toFixed(3))
+      row.yMinM = Number(real.bottomLeft.yM.toFixed(3))
+      row.xMaxM = Number(real.topRight.xM.toFixed(3))
+      row.yMaxM = Number(real.topRight.yM.toFixed(3))
+      row.centerXM = row.xM
+      row.centerYM = row.yM
+      row.x1M = row.xMinM
+      row.y1M = row.yMinM
+      row.x2M = row.xMaxM
+      row.y2M = row.yMaxM
     }
     return row
   })

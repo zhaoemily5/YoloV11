@@ -50,7 +50,7 @@ import { ElMessage } from 'element-plus'
 import { Document } from '@element-plus/icons-vue'
 import type { ProblemReportMeta, ProblemReportInput } from '../utils/facadeProblemReportExport'
 import { exportProblemReportFormats } from '../utils/facadeWallReportExport'
-import { formatWallPoint, hasValidCoordTransform, pixelBboxToRealCm } from '../utils/facadeCoordTransform'
+import { formatWallPoint, hasValidCoordTransform, pixelBboxToRealM } from '../utils/facadeCoordTransform'
 
 const DISEASE_COLORS: Record<string, string> = {
   '风化': '#e74c3c',
@@ -95,12 +95,12 @@ function formatBlock(det: any, index: number): string {
   ]
   const meta = props.meta
   if (hasValidCoordTransform(meta)) {
-    const real = pixelBboxToRealCm(x1, y1, x2, y2, {
+    const real = pixelBboxToRealM(x1, y1, x2, y2, {
       scalePxPerMm: meta!.scalePxPerMm!,
       imageHeight: meta!.imageHeight!,
     })
     lines.push(
-      `墙面坐标(cm)[原点左下,X→,Y↑]: 中心(${formatWallPoint(real.center)}) ` +
+      `墙面坐标(m)[原点左下,X→,Y↑]: 中心(${formatWallPoint(real.center)}) ` +
         `左下(${formatWallPoint(real.bottomLeft)}) 右上(${formatWallPoint(real.topRight)})`
     )
   }
@@ -147,27 +147,40 @@ async function exportAs(fmt: 'txt' | 'word' | 'pdf') {
 
 <style scoped>
 .fpr-wrap { width: 100%; }
-.fpr-wrap.fpr-fill { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.fpr-wrap.fpr-fill { width: 100%; }
 .fpr-collapse { border: none; background: transparent; }
+.fpr-collapse :deep(.el-collapse-item) {
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 4px 16px rgba(0, 112, 192, 0.06);
+}
 .fpr-collapse :deep(.el-collapse-item__header) {
-  height: 52px;
+  height: 48px;
+  line-height: 48px;
   padding: 0 16px;
   background: linear-gradient(90deg, #f0f7ff, #fff);
-  border-radius: 10px 10px 0 0;
   border: 1px solid #d9ecff;
   border-bottom: none;
   font-weight: 600;
 }
+.fpr-collapse :deep(.el-collapse-item:not(.is-active) .el-collapse-item__header) {
+  border-bottom: 1px solid #d9ecff;
+  border-radius: 12px;
+}
+.fpr-collapse :deep(.el-collapse-item.is-active .el-collapse-item__header) {
+  border-radius: 12px 12px 0 0;
+}
 .fpr-collapse :deep(.el-collapse-item__wrap) {
   border: 1px solid #e4e7ed;
-  border-radius: 0 0 10px 10px;
+  border-top: none;
+  border-radius: 0 0 12px 12px;
   background: #fff;
 }
 .fpr-collapse :deep(.el-collapse-item__content) {
-  padding: 16px 18px 18px;
+  padding: 14px 16px 16px;
 }
 .fpr-title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; width: 100%; }
-.fpr-icon { color: #0070c0; font-size: 18px; }
+.fpr-icon { color: #0070c0; font-size: 18px; flex-shrink: 0; }
 .fpr-title-text { font-size: 15px; font-weight: 700; color: #003a66; }
 .fpr-filter-hint { font-size: 12px; color: #909399; font-weight: normal; margin-left: auto; }
 .fpr-toolbar {
@@ -198,7 +211,6 @@ async function exportAs(fmt: 'txt' | 'word' | 'pdf') {
   overflow-y: auto;
   padding: 4px 2px;
 }
-.fpr-fill .fpr-blocks { max-height: min(62vh, 720px); }
 .fpr-block {
   margin: 0;
   padding: 14px 14px 14px 42px;
