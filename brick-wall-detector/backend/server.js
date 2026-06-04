@@ -1326,36 +1326,41 @@ async function createAutoScaleTiles(job) {
 
   const tileRecords = [];
   let rowIndex = 0;
-
-  for (let y = 0; y < srcH; y += stepPxExact) {
+  let y = 0;
+  while (y < srcH - 0.5) {
     let colIndex = 0;
-    for (let x = 0; x < srcW; x += stepPxExact) {
+    let x = 0;
+    while (x < srcW - 0.5) {
       const xi = Math.round(x);
       const yi = Math.round(y);
       const cropW = Math.min(Math.round(extractPxExact), srcW - xi);
       const cropH = Math.min(Math.round(extractPxExact), srcH - yi);
-      if (cropW < stepPxExact * 0.30 || cropH < stepPxExact * 0.30) { colIndex++; continue; }
+      if (cropW >= 4 && cropH >= 4) {
+        const tileId       = `${job.jobId}_r${rowIndex}_c${colIndex}`;
+        const tileFilename = `${tileId}.jpg`;
+        const tilePath     = path.join(__dirname, 'uploads/tiles', tileFilename);
 
-      const tileId       = `${job.jobId}_r${rowIndex}_c${colIndex}`;
-      const tileFilename = `${tileId}.jpg`;
-      const tilePath     = path.join(__dirname, 'uploads/tiles', tileFilename);
+        await sharp(srcPath)
+          .extract({ left: xi, top: yi, width: cropW, height: cropH })
+          .jpeg({ quality: 92 })
+          .toFile(tilePath);
 
-      await sharp(srcPath)
-        .extract({ left: xi, top: yi, width: cropW, height: cropH })
-        .jpeg({ quality: 92 })
-        .toFile(tilePath);
-
-      tileRecords.push({
-        tileId, rowIndex, colIndex,
-        offsetX: xi + cropOffX, offsetY: yi + cropOffY,
-        width: cropW, height: cropH,
-        corePx,
-        stepPx: Math.round(stepPxExact),
-        tilePath, tileUrl: `/uploads/tiles/${tileFilename}`,
-        status: 'created'
-      });
-      colIndex++;
+        tileRecords.push({
+          tileId, rowIndex, colIndex,
+          offsetX: xi + cropOffX, offsetY: yi + cropOffY,
+          width: cropW, height: cropH,
+          corePx,
+          stepPx: Math.round(stepPxExact),
+          tilePath, tileUrl: `/uploads/tiles/${tileFilename}`,
+          status: 'created'
+        });
+        colIndex++;
+      }
+      const remainX = srcW - x;
+      x += remainX <= stepPxExact * 1.05 ? remainX : stepPxExact;
     }
+    const remainY = srcH - y;
+    y += remainY <= stepPxExact * 1.05 ? remainY : stepPxExact;
     rowIndex++;
   }
   console.log(`[FacadeAuto] 智能切片: core=${corePx}px extract≈${Math.round(extractPxExact)}px step≈${Math.round(stepPxExact)}px 共 ${tileRecords.length} 块`);

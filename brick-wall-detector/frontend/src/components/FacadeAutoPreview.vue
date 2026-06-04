@@ -11,7 +11,8 @@
         <template v-if="overlapMm > 0"> · 裁切 {{ tileMetrics.extractPx }}px（含每侧 {{ Math.round(overlapMm) }}mm 重叠）</template>
       </span>
       <div style="flex:1" />
-      <el-button size="small" @click="resetFrame" :icon="FullScreen" plain>全图</el-button>
+      <el-button size="small" @click="fitContentFrame" :icon="Crop" plain>适配有效区域</el-button>
+      <el-button size="small" @click="resetFrame" :icon="FullScreen" plain>整张原图</el-button>
     </div>
 
     <!-- Interactive canvas -->
@@ -69,7 +70,7 @@
     <div class="fap-footer">
       <el-icon color="#52c41a"><InfoFilled /></el-icon>
       <span>
-        拖动<b>外边框控制点</b>限定分析区域；
+        加载后已自动贴合有效画面；拖动<b>外边框</b>可微调，切片网格铺满框内区域；
         <template v-if="scaleNative > 0">
           比例尺 <b>{{ scaleNative.toFixed(3) }}</b> px/mm；
           核心边长 <b>{{ tileMetrics.corePx }}</b> px（{{ Math.round(zoneSizeMm) }}mm）；
@@ -83,8 +84,9 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
-import { InfoFilled, FullScreen } from '@element-plus/icons-vue'
+import { InfoFilled, FullScreen, Crop } from '@element-plus/icons-vue'
 import { computeTileMetrics, countTilesInRegion } from '../utils/facadeTileMetrics'
+import { detectImageContentBounds, type ContentBounds } from '../utils/imageContentBounds'
 
 const props = defineProps<{
   imageFile?: File | null
@@ -136,6 +138,18 @@ watch(() => [props.imageFile, props.previewImageUrl], ([f, url]) => {
   dispW.value = 0; dispH.value = 0
 }, { immediate: true })
 
+function applyFrame(f: ContentBounds, emitUpdate = true) {
+  frame.value = { ...f }
+  if (emitUpdate) emit('update:frame', { ...frame.value })
+}
+
+async function fitContentFrame() {
+  const img = imgRef.value
+  if (!img?.naturalWidth) return
+  const bounds = await detectImageContentBounds(img)
+  applyFrame(bounds)
+}
+
 function onLoad() {
   const img = imgRef.value!
   imgNW.value = img.naturalWidth
@@ -143,7 +157,7 @@ function onLoad() {
   dispW.value = img.clientWidth
   dispH.value = img.clientHeight
   emit('update:imageSize', imgNW.value, imgNH.value)
-  resetFrame()
+  void fitContentFrame()
 }
 
 onBeforeUnmount(() => {
@@ -201,8 +215,7 @@ const frame = ref<Frame>({ left: 0, top: 0, right: 1, bottom: 1 })
 const MIN_FRAME = 0.05
 
 function resetFrame() {
-  frame.value = { left: 0, top: 0, right: 1, bottom: 1 }
-  emit('update:frame', { ...frame.value })
+  applyFrame({ left: 0, top: 0, right: 1, bottom: 1 })
 }
 
 const frameStyle = computed(() => ({
@@ -234,30 +247,39 @@ const visibleTiles = computed<{ style: Record<string,string>; idx: number }[]>((
   const x1 = f.right * dispW.value
   const y1 = f.bottom * dispH.value
 
+  const roiW = x1 - x0
+  const roiH = y1 - y0
+  if (roiW < 8 || roiH < 8) return []
+
   const tiles: { style: Record<string,string>; idx: number }[] = []
   let idx = 1
-  for (let ty = y0; ty < y1; ty += step) {
-    for (let tx = x0; tx < x1; tx += step) {
-      if (tiles.length >= MAX_DISPLAY_TILES) {
-        return tiles
-      }
+  let ty = y0
+  while (ty < y1 - 0.5) {
+    let tx = x0
+    while (tx < x1 - 0.5) {
+      if (tiles.length >= MAX_DISPLAY_TILES) return tiles
       const w = Math.min(extract, x1 - tx)
       const h = Math.min(extract, y1 - ty)
-      if (w < step * 0.3 || h < step * 0.3) { idx++; continue }
-
-      // 内框显示 C×C mm 核心区域，外框为含重叠的裁切范围
-      const pad = Math.max(0, (extract - core) / 2)
-      tiles.push({
-        idx: idx++,
-        style: {
-          left:   `${tx}px`,
-          top:    `${ty}px`,
-          width:  `${w}px`,
-          height: `${h}px`,
-          boxShadow: `inset 0 0 0 2px rgba(103,194,58,0.85), inset 0 0 0 ${pad + 2}px rgba(103,194,58,0.25)`,
-        }
-      })
+      if (w >= 4 && h >= 4) {
+        const pad = Math.max(0, (extract - core) / 2)
+        tiles.push({
+          idx: idx++,
+          style: {
+            left: `${tx}px`,
+            top: `${ty}px`,
+            width: `${w}px`,
+            height: `${h}px`,
+            boxShadow: `inset 0 0 0 2px rgba(103,194,58,0.85), inset 0 0 0 ${pad + 2}px rgba(103,194,58,0.25)`,
+          },
+        })
+      } else {
+        idx++
+      }
+      const remainX = x1 - tx
+      tx += remainX <= step * 1.05 ? remainX : step
     }
+    const remainY = y1 - ty
+    ty += remainY <= step * 1.05 ? remainY : step
   }
   return tiles
 })

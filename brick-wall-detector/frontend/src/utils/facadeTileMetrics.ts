@@ -37,7 +37,7 @@ export function computeTileMetrics(
   }
 }
 
-/** 统计 ROI 区域内有效切片数量（与后端 30% 阈值一致） */
+/** 统计 ROI 区域内切片数量（网格铺满至右/下边缘，与预览一致） */
 export function countTilesInRegion(
   roiWidthPx: number,
   roiHeightPx: number,
@@ -47,14 +47,18 @@ export function countTilesInRegion(
   if (!stepPxExact || !extractPxExact || !roiWidthPx || !roiHeightPx) return 0
 
   let count = 0
-  for (let y = 0; y < roiHeightPx; y += stepPxExact) {
-    for (let x = 0; x < roiWidthPx; x += stepPxExact) {
+  let y = 0
+  while (y < roiHeightPx - 0.5) {
+    let x = 0
+    while (x < roiWidthPx - 0.5) {
       const cropW = Math.min(extractPxExact, roiWidthPx - x)
       const cropH = Math.min(extractPxExact, roiHeightPx - y)
-      if (cropW >= stepPxExact * 0.3 && cropH >= stepPxExact * 0.3) {
-        count++
-      }
+      if (cropW >= 4 && cropH >= 4) count++
+      const remainX = roiWidthPx - x
+      x += remainX <= stepPxExact * 1.05 ? remainX : stepPxExact
     }
+    const remainY = roiHeightPx - y
+    y += remainY <= stepPxExact * 1.05 ? remainY : stepPxExact
   }
   return count
 }
